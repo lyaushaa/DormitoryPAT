@@ -24,6 +24,7 @@ namespace DormitoryPAT.Models
         public long? TelegramId { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Студент', 'Сотрудник')")]
         public UserRole Role { get; set; }
 
         // Навигационные свойства
@@ -31,13 +32,18 @@ namespace DormitoryPAT.Models
         public Employees Employees { get; set; }
         public ICollection<RepairRequests> RepairRequests { get; set; }
         public ICollection<DutySchedule> DutySchedules { get; set; }
+        [InverseProperty("Users")]
         public ICollection<Complaints> SubmittedComplaints { get; set; }
+        [InverseProperty("Reviewer")]
         public ICollection<Complaints> ReviewedComplaints { get; set; }
     }
 
     public enum UserRole
     {
+        [Display(Name = "Студент")]
         Студент,
+
+        [Display(Name = "Сотрудник")]
         Сотрудник
     }
 }

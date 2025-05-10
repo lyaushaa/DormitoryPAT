@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Telegram.Bot.Types;
+using System.Runtime.Serialization;
 
 namespace DormitoryPAT.Models
 {
@@ -25,6 +26,7 @@ namespace DormitoryPAT.Models
         public DateTime DateOfBirth { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Студент', 'Староста этажа', 'Председатель общежития')")]
         public StudentRole StudentRole { get; set; } = StudentRole.Студент;
 
         // Навигационное свойство
@@ -33,10 +35,13 @@ namespace DormitoryPAT.Models
 
     public enum StudentRole
     {
+        [Display(Name = "Студент")]
         Студент,
-        [Display(Name = "Староста этажа")]
+
+        [Display(Name = "Староста_этажа")]
         Староста_этажа,
-        [Display(Name = "Председатель общежития")]
+
+        [Display(Name = "Председатель_общежития")]
         Председатель_общежития
     }
 }

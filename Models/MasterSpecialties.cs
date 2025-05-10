@@ -23,9 +23,16 @@ namespace DormitoryPAT.Models
 
     public enum SpecialtyName
     {
+        [Display(Name = "Электрик")]
         Электрик,
+
+        [Display(Name = "Плотник")]
         Плотник,
+
+        [Display(Name = "Сантехник")]
         Сантехник,
+
+        [Display(Name = "Универсал")]
         Универсал
     }
 }

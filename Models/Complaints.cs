@@ -21,7 +21,7 @@ namespace DormitoryPAT.Models
         [Required]
         public string ComplaintText { get; set; }
 
-        [ForeignKey("Users")]
+        [ForeignKey("Reviewer")]
         public int? ReviewedBy { get; set; }
 
         [Required]
@@ -37,15 +37,21 @@ namespace DormitoryPAT.Models
 
         // Навигационные свойства
         public Users Users { get; set; }
-        public Users ReviewedByUser { get; set; }
+        public Users Reviewer { get; set; }
     }
 
     public enum ComplaintStatus
     {
+        [Display(Name = "Новый")]
         Новый,
+
         [Display(Name = "На рассмотрении")]
         На_рассмотрении,
+
+        [Display(Name = "Выполнено")]
         Выполнено,
+
+        [Display(Name = "Отклонено")]
         Отклонено
     }
 }

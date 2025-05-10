@@ -49,17 +49,28 @@ namespace DormitoryPAT.Models
 
     public enum ProblemType
     {
+        [Display(Name = "Электрика")]
         Электрика,
+
+        [Display(Name = "Сантехника")]
         Сантехника,
+
+        [Display(Name = "Мебель")]
         Мебель
     }
 
     public enum RequestStatus
     {
+        [Display(Name = "Новая")]
         Новая,
+
         [Display(Name = "В процессе")]
         В_процессе,
+
+        [Display(Name = "Завершена")]
         Завершена,
+
+        [Display(Name = "Отклонена")]
         Отклонена
     }
 }
