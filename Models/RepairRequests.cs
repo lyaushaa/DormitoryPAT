@@ -1,11 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations.Schema;
 using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Telegram.Bot.Types;
 
 namespace DormitoryPAT.Models
 {
@@ -24,6 +18,7 @@ namespace DormitoryPAT.Models
         public string Location { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Электрика', 'Сантехника', 'Мебель')")]
         public ProblemType Problem { get; set; }
 
         public string UserComment { get; set; }
@@ -32,6 +27,7 @@ namespace DormitoryPAT.Models
         public int? MasterId { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Новая', 'В_процессе', 'Завершена', 'Отклонена')")]
         public RequestStatus Status { get; set; }
 
         public string MasterComment { get; set; }
@@ -64,7 +60,7 @@ namespace DormitoryPAT.Models
         [Display(Name = "Новая")]
         Новая,
 
-        [Display(Name = "В процессе")]
+        [Display(Name = "В_процессе")]
         В_процессе,
 
         [Display(Name = "Завершена")]

@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations.Schema;
 using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace DormitoryPAT.Models
 {
@@ -15,6 +10,7 @@ namespace DormitoryPAT.Models
         public int SpecialtyId { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Электрик', 'Плотник', 'Сантехник', 'Универсал')")]
         public SpecialtyName SpecialtyName { get; set; }
 
         // Навигационное свойство
