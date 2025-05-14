@@ -7,6 +7,9 @@ using DormitoryPAT.Models;
 using Microsoft.EntityFrameworkCore;
 using DormitoryPAT.Context;
 using System.Text;
+using static System.Net.Mime.MediaTypeNames;
+using System.Drawing;
+using System.Drawing.Imaging;
 
 class Program
 {
@@ -333,6 +336,7 @@ class Program
             }
         }
         commands.Add(new BotCommand { Command = "phonebook", Description = "Телефонный справочник" });
+        commands.Add(new BotCommand { Command = "payment", Description = "Плата за общежитие" });
 
         await client.SetMyCommands(commands, scope: new BotCommandScopeAllPrivateChats(), languageCode: "ru");
         Console.WriteLine($"[{DateTime.Now}] Меню команд обновлено для {user.UserId}");
@@ -363,6 +367,10 @@ class Program
 
             case "/phonebook":
                 await HandlePhonebookCommand(client, message.Chat.Id);
+                break;
+
+            case "/payment":
+                await HandleDormPaymentCommand(client, message.Chat.Id);
                 break;
 
             default:
@@ -933,6 +941,109 @@ class Program
 
     #endregion
 
+    #region Модуль платы за общежитие (с генерацией изображения)
+
+    private static async Task HandleDormPaymentCommand(ITelegramBotClient client, long chatId)
+    {
+        Console.WriteLine($"[{DateTime.Now}] Пользователь запросил информацию о плате за общежитие");
+
+        try
+        {
+            // Создаем изображение таблицы
+            var image = GeneratePaymentTableImage();
+
+            // Отправляем изображение
+            Console.WriteLine($"[{DateTime.Now}] Отправка изображения с таблицей платежей");
+            await using var stream = new MemoryStream(image);
+            await client.SendPhoto(
+                chatId: chatId,
+                photo: InputFile.FromStream(stream, "payment_table.png"),
+                caption: "💰 Плата за общежитие");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{DateTime.Now}] Ошибка при формировании таблицы: {ex}");
+            await client.SendMessage(
+                chatId: chatId,
+                text: "⚠ Произошла ошибка при формировании таблицы платежей");
+        }
+    }
+
+    private static byte[] GeneratePaymentTableImage()
+    {
+        // Данные для таблицы
+        var headers = new[] { "Категория студентов", "Плата за наём, руб.", "Плата за коммун. услуги, руб.", "ИТОГО в месяц, руб." };
+        var rows = new[]
+        {
+        new[] { "Без категории", "9,60", "1137,92", "1147,52" },
+        new[] { "Дети-сироты и оставшиеся без попечения", "-", "-", "Бесплатно" },
+        new[] { "Потерявшие обоих родителей", "-", "-", "Бесплатно" },
+        new[] { "Участники СВО и их дети", "-", "-", "Бесплатно" },
+        new[] { "Инвалиды", "-", "568,96", "568,96" },
+        new[] { "Получатели соц. помощи", "-", "796,54", "796,54" }
+    };
+
+        // Размеры и настройки изображения
+        int cellPadding = 15;
+        int rowHeight = 40;
+        int headerHeight = 65;
+        int imageWidth = 1100;
+        int[] columnWidths = { 450, 200, 250, 200 };
+
+        // Рассчитываем высоту изображения
+        int imageHeight = headerHeight + rows.Length * rowHeight + 50;
+
+        // Создаем изображение
+        using var bitmap = new Bitmap(imageWidth, imageHeight);
+        using var graphics = Graphics.FromImage(bitmap);
+
+        // Заливаем фон
+        graphics.Clear(System.Drawing.Color.White);
+
+        // Настройки шрифта
+        var headerFont = new System.Drawing.Font("Arial", 14, FontStyle.Bold);
+        var rowFont = new System.Drawing.Font("Arial", 12);
+        var brush = new SolidBrush(System.Drawing.Color.Black);
+
+        // Рисуем заголовки
+        int x = 0;
+        for (int i = 0; i < headers.Length; i++)
+        {
+            graphics.DrawRectangle(Pens.Gray, x, 0, columnWidths[i], headerHeight);
+            graphics.DrawString(headers[i], headerFont, brush,
+                new RectangleF(x + cellPadding, 15, columnWidths[i] - 2 * cellPadding, headerHeight),
+                new StringFormat { Alignment = StringAlignment.Center });
+            x += columnWidths[i];
+        }
+
+        // Рисуем строки данных
+        int y = headerHeight;
+        foreach (var row in rows)
+        {
+            x = 0;
+            for (int i = 0; i < row.Length; i++)
+            {
+                graphics.DrawRectangle(Pens.LightGray, x, y, columnWidths[i], rowHeight);
+                graphics.DrawString(row[i], rowFont, brush,
+                    new RectangleF(x + cellPadding, y + 10, columnWidths[i] - 2 * cellPadding, rowHeight),
+                    new StringFormat { Alignment = StringAlignment.Center });
+                x += columnWidths[i];
+            }
+            y += rowHeight;
+        }
+
+        // Добавляем подпись
+        var footerFont = new System.Drawing.Font("Arial", 10, FontStyle.Italic);
+        graphics.DrawString("Актуально на " + DateTime.Now.ToString("dd.MM.yyyy"),
+            footerFont, Brushes.Gray, 20, imageHeight - 30);
+
+        // Конвертируем в массив байтов
+        using var ms = new MemoryStream();
+        bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+        return ms.ToArray();
+    }
+
+    #endregion
 
     #region Обработка CallbackQuery
     private static async Task HandleCallbackQuery(ITelegramBotClient client, CallbackQuery callbackQuery)
