@@ -28,9 +28,7 @@ namespace DormitoryPAT.Models
         public ICollection<RepairRequests> RepairRequests { get; set; }
         public ICollection<DutySchedule> DutySchedules { get; set; }
         [InverseProperty("Users")]
-        public ICollection<Complaints> SubmittedComplaints { get; set; }
-        [InverseProperty("Reviewer")]
-        public ICollection<Complaints> ReviewedComplaints { get; set; }
+        public ICollection<Complaints> SubmittedComplaints { get; set; }        
     }
 
     public enum UserRole

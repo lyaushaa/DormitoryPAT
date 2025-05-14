@@ -19,9 +19,10 @@ namespace DormitoryPAT.Models
         public int? ReviewedBy { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Новая', 'На_рассмотрении', 'Выполнена', 'Отклонена')")]
         public ComplaintStatus Status { get; set; }
 
-        public string Comment { get; set; }
+        public string? Comment { get; set; }
 
         [DatabaseGenerated(DatabaseGeneratedOption.Computed)]
         public DateTime SubmissionDate { get; set; }
@@ -31,21 +32,21 @@ namespace DormitoryPAT.Models
 
         // Навигационные свойства
         public Users Users { get; set; }
-        public Users Reviewer { get; set; }
+        public Employees Reviewer { get; set; }
     }
 
     public enum ComplaintStatus
     {
-        [Display(Name = "Новый")]
-        Новый,
+        [Display(Name = "Новая")]
+        Новая,
 
-        [Display(Name = "На рассмотрении")]
+        [Display(Name = "На_рассмотрении")]
         На_рассмотрении,
 
-        [Display(Name = "Выполнено")]
-        Выполнено,
+        [Display(Name = "Выполнена")]
+        Выполнена,
 
-        [Display(Name = "Отклонено")]
-        Отклонено
+        [Display(Name = "Отклонена")]
+        Отклонена
     }
 }

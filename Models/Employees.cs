@@ -18,9 +18,10 @@ namespace DormitoryPAT.Models
 
         // Навигационные свойства
         public Users Users { get; set; }
-        public ICollection<MasterEmployees> MasterSpecialties { get; set; }
         public ICollection<RepairRequests> AssignedRepairRequests { get; set; }
         public ICollection<DutyEducators> DutyEducatorShifts { get; set; }
+        [InverseProperty("Reviewer")]
+        public ICollection<Complaints> ReviewedComplaints { get; set; }
     }
 
     public enum EmployeeRole

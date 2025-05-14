@@ -1,14 +1,11 @@
-﻿using Telegram.Bot.Types;
-using Telegram.Bot;
+﻿using Telegram.Bot;
 using Telegram.Bot.Polling;
+using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-using static Telegram.Bot.TelegramBotClient;
-using System;
-using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types.ReplyMarkups;
 using DormitoryPAT.Models;
-using DormitoryPAT.Context;
 using Microsoft.EntityFrameworkCore;
+using DormitoryPAT.Context;
 
 class Program
 {
@@ -16,6 +13,7 @@ class Program
     private static ReceiverOptions _receiverOptions;
     private static Dictionary<long, UserSession> _userSessions = new();
 
+    // Класс для хранения состояния пользователя
     class UserSession
     {
         public Users User { get; set; }
@@ -33,21 +31,16 @@ class Program
 
     static async Task Main(string[] args)
     {
-        Console.WriteLine("Запуск бота...");      
+        Console.WriteLine("Запуск бота...");
 
         _botClient = new TelegramBotClient("7681929292:AAELFhLTiH3c4KZtnRrPY9aGD6gYyLWVo5E");
         _receiverOptions = new ReceiverOptions
         {
-            AllowedUpdates = new[]
-            {
-                UpdateType.Message,
-                UpdateType.CallbackQuery
-            },
+            AllowedUpdates = new[] { UpdateType.Message, UpdateType.CallbackQuery },
             DropPendingUpdates = true,
         };
 
         using var cts = new CancellationTokenSource();
-        
         _botClient.StartReceiving(UpdateHandler, ErrorHandler, _receiverOptions, cts.Token);
 
         var me = await _botClient.GetMe();
@@ -61,27 +54,18 @@ class Program
     {
         try
         {
-            Console.WriteLine($"Получено обновление: {update.Type}");
-
             switch (update.Type)
             {
                 case UpdateType.Message when update.Message?.Text != null:
-                    Console.WriteLine($"Сообщение от {update.Message.From.Id}: {update.Message.Text}");
                     await HandleMessage(client, update.Message);
                     break;
 
                 case UpdateType.Message when update.Message?.Contact != null:
-                    Console.WriteLine($"Получен контакт от {update.Message.From.Id}");
                     await HandleMessage(client, update.Message);
                     break;
 
                 case UpdateType.CallbackQuery:
-                    Console.WriteLine($"Callback от {update.CallbackQuery.From.Id}: {update.CallbackQuery.Data}");
                     await HandleCallbackQuery(client, update.CallbackQuery);
-                    break;
-
-                default:
-                    Console.WriteLine($"Необработанный тип обновления: {update.Type}");
                     break;
             }
         }
@@ -94,62 +78,55 @@ class Program
     private static async Task HandleMessage(ITelegramBotClient client, Message message)
     {
         var chatId = message.Chat.Id;
-        Console.WriteLine($"Обработка сообщения в чате {chatId}");
 
         if (!_userSessions.TryGetValue(chatId, out var session))
         {
-            Console.WriteLine($"Создана новая сессия для чата {chatId}");
             session = new UserSession();
             _userSessions[chatId] = session;
         }
 
+        // Обработка команды /start
         if (message.Text == "/start")
         {
-            Console.WriteLine($"Команда /start от {chatId}");
-
-            await StartAuthProcess(client, message.Chat.Id);
+            await StartAuthProcess(client, chatId);
             return;
         }
 
+        // Обработка этапов авторизации
         if (session.AuthState == AuthState.AwaitingPhone && message.Contact != null)
         {
-            Console.WriteLine($"Получен контакт от {chatId}");
             await ProcessPhoneNumber(client, message, session);
             return;
         }
 
         if (session.AuthState == AuthState.AwaitingPassword)
         {
-            Console.WriteLine($"Получен пароль от {chatId}");
             await ProcessPassword(client, message, session);
             return;
         }
 
+        // Проверка авторизации
         if (session.User == null)
         {
-            Console.WriteLine($"Пользователь не авторизован в чате {chatId}");
             await client.SendMessage(chatId, "Пожалуйста, начните с команды /start");
             return;
         }
 
-        Console.WriteLine($"Обработка команды от авторизованного пользователя {session.User.UserId}");
+        if (session.TempData.ContainsKey("complaintState") && session.TempData["complaintState"].ToString() == "awaitingText")
+        {
+            await ProcessComplaintText(client, message, session);
+            return;
+        }
+
+        // Обработка команд после авторизации
         await ProcessAuthorizedCommand(client, message, session);
     }
 
+    #region Авторизация
     private static async Task StartAuthProcess(ITelegramBotClient client, long chatId)
     {
-        Console.WriteLine($"Начало процесса авторизации для {chatId}");
-
-        var requestButton = new KeyboardButton("Предоставить номер телефона")
-        {
-            RequestContact = true
-        };
-
-        var keyboard = new ReplyKeyboardMarkup(requestButton)
-        {
-            ResizeKeyboard = true,
-            OneTimeKeyboard = true
-        };
+        var requestButton = new KeyboardButton("Предоставить номер телефона") { RequestContact = true };
+        var keyboard = new ReplyKeyboardMarkup(requestButton) { ResizeKeyboard = true, OneTimeKeyboard = true };
 
         await client.SendMessage(
             chatId: chatId,
@@ -157,29 +134,23 @@ class Program
             replyMarkup: keyboard);
 
         _userSessions[chatId].AuthState = AuthState.AwaitingPhone;
-        Console.WriteLine($"Установлено состояние AwaitingPhone для {chatId}");
     }
 
     private static async Task ProcessPhoneNumber(ITelegramBotClient client, Message message, UserSession session)
     {
-        Console.WriteLine($"Обработка номера телефона для {message.Chat.Id}");
-
         try
         {
             var phoneNumber = message.Contact.PhoneNumber;
-            Console.WriteLine($"Получен номер: {phoneNumber}");
-
             var cleanPhone = long.Parse(phoneNumber.Replace("+", ""));
 
             using var db = new UsersContext();
-            var user = db.Users
-                .Include(u => u.Students) // Явно загружаем данные студента
-                .Include(u => u.Employees) // Явно загружаем данные сотрудника
-                .FirstOrDefault(u => u.PhoneNumber == cleanPhone);
+            var user = await db.Users
+                .Include(u => u.Students)
+                .Include(u => u.Employees)
+                .FirstOrDefaultAsync(u => u.PhoneNumber == cleanPhone);
 
             if (user == null)
             {
-                Console.WriteLine($"Пользователь с номером {cleanPhone} не найден");
                 await client.SendMessage(
                     chatId: message.Chat.Id,
                     text: "❌ Пользователь не найден. Обратитесь к администратору.",
@@ -187,34 +158,21 @@ class Program
                 return;
             }
 
-            // Обновляем TelegramId, если он пустой или отличается от текущего
+            // Обновляем TelegramId если нужно
             if (user.TelegramId == null || user.TelegramId != message.Chat.Id)
             {
                 user.TelegramId = message.Chat.Id;
-                db.SaveChanges();
-                Console.WriteLine($"Обновлен TelegramId для пользователя {user.UserId} на {message.Chat.Id}");
+                await db.SaveChangesAsync();
             }
 
-            Console.WriteLine($"Найден пользователь: {user.UserId} - {user.FullName}");
             session.User = user;
 
             if (user.Role == UserRole.Студент)
             {
-                Console.WriteLine($"Авторизация студента {user.UserId}");
-                if (user.Students == null)
-                {
-                    Console.WriteLine("Ошибка: данные студента не найдены");
-                    await client.SendMessage(
-                        chatId: message.Chat.Id,
-                        text: "❌ Данные студента не найдены. Обратитесь к администратору.");
-                    return;
-                }
-
                 await CompleteAuth(client, message.Chat.Id, user);
             }
             else
             {
-                Console.WriteLine($"Требуется пароль для сотрудника {user.UserId}");
                 session.AuthState = AuthState.AwaitingPassword;
                 await client.SendMessage(
                     chatId: message.Chat.Id,
@@ -233,27 +191,22 @@ class Program
 
     private static async Task ProcessPassword(ITelegramBotClient client, Message message, UserSession session)
     {
-        Console.WriteLine($"Обработка пароля для {message.Chat.Id}");
-
         try
         {
             var password = message.Text;
-            Console.WriteLine($"Получен пароль: {password}");
 
             using var db = new EmployeesContext();
-            var employee = db.Employees
-                .FirstOrDefault(e => e.EmployeeId == session.User.UserId && e.Password == password);
+            var employee = await db.Employees
+                .FirstOrDefaultAsync(e => e.EmployeeId == session.User.UserId && e.Password == password);
 
             if (employee == null)
             {
-                Console.WriteLine($"Неверный пароль для пользователя {session.User.UserId}");
                 await client.SendMessage(
                     chatId: message.Chat.Id,
                     text: "❌ Неверный пароль. Попробуйте снова.");
                 return;
             }
 
-            Console.WriteLine($"Успешная авторизация Сотрудника {session.User.UserId}");
             await CompleteAuth(client, message.Chat.Id, session.User);
             session.AuthState = AuthState.None;
         }
@@ -268,26 +221,9 @@ class Program
 
     private static async Task CompleteAuth(ITelegramBotClient client, long chatId, Users user)
     {
-        Console.WriteLine($"Завершение авторизации для {user.UserId}");
-
-        string roleText;
-        if (user.Role == UserRole.Студент)
-        {
-            if (user.Students == null)
-            {
-                await client.SendMessage(
-                    chatId: chatId,
-                    text: "❌ Ошибка: данные студента не найдены");
-                return;
-            }
-            var student = user.Students;
-            roleText = student.StudentRole.ToString();
-        }
-        else
-        {
-            var employee = user.Employees;
-            roleText = employee.EmployeeRole.ToString();
-        }
+        string roleText = user.Role == UserRole.Студент ?
+            user.Students.StudentRole.ToString() :
+            user.Employees.EmployeeRole.ToString();
 
         await client.SendMessage(
             chatId: chatId,
@@ -296,85 +232,69 @@ class Program
 
         await UpdateMenuCommands(client, chatId, user);
     }
+    #endregion
 
+    #region Меню команд
     private static async Task UpdateMenuCommands(ITelegramBotClient client, long chatId, Users user)
-    {        
-        Console.WriteLine($"Обновление меню команд для {user.UserId}");
+    {
         var commands = new List<BotCommand>();
 
         if (user.Role == UserRole.Студент)
         {
-            if (user.Students == null)
-            {
-                Console.WriteLine("Ошибка: данные студента не найдены");
-                await client.SendMessage(
-                    chatId: chatId,
-                    text: "❌ Данные студента не загружены. Обратитесь к администратору.");
-                return;
-            }
-
-            var student = user.Students;
-
-            // Основные команды для всех студентов
             commands.Add(new BotCommand { Command = "repair", Description = "Заявка на ремонт" });
             commands.Add(new BotCommand { Command = "duty", Description = "График дежурств" });
             commands.Add(new BotCommand { Command = "complaint", Description = "Отправить жалобу" });
             commands.Add(new BotCommand { Command = "phonebook", Description = "Телефонный справочник" });
             commands.Add(new BotCommand { Command = "educator", Description = "Дежурный воспитатель" });
 
-            // Проверяем student на null перед доступом к StudentRole
-            if (student.StudentRole == StudentRole.Староста_этажа || student.StudentRole == StudentRole.Председатель_общежития)
-            {                
+            if (user.Students.StudentRole == StudentRole.Староста_этажа ||
+                user.Students.StudentRole == StudentRole.Председатель_общежития)
+            {
                 commands.Add(new BotCommand { Command = "notification", Description = "Отправить уведомление" });
             }
         }
         else if (user.Role == UserRole.Сотрудник)
         {
-            var employee = user.Employees;
-
-            if (employee != null) // Добавляем проверку и для employee
+            switch (user.Employees.EmployeeRole)
             {
-                switch (employee.EmployeeRole)
-                {
-                    case EmployeeRole.Мастер:
-                        commands.Add(new BotCommand { Command = "repair", Description = "Список заявок" });
-                        break;
+                case EmployeeRole.Мастер:
+                    commands.Add(new BotCommand { Command = "repair", Description = "Список заявок" });
+                    break;
 
-                    case EmployeeRole.Воспитатель:
-                    case EmployeeRole.Дежурный_воспитатель:
-                        commands.Add(new BotCommand { Command = "complaint", Description = "Жалобы" });
-                        commands.Add(new BotCommand { Command = "educator", Description = "Назначить дежурного" });
-                        commands.Add(new BotCommand { Command = "notification", Description = "Отправить уведомление" });
-                        break;
+                case EmployeeRole.Воспитатель:
+                case EmployeeRole.Дежурный_воспитатель:
+                    commands.Add(new BotCommand { Command = "complaint", Description = "Жалобы" });
+                    commands.Add(new BotCommand { Command = "educator", Description = "Назначить дежурного" });
+                    commands.Add(new BotCommand { Command = "notification", Description = "Отправить уведомление" });
+                    break;
 
-                    case EmployeeRole.Администратор:
-                        commands.Add(new BotCommand { Command = "repair", Description = "Ремонт" });
-                        commands.Add(new BotCommand { Command = "duty", Description = "Управление графиком" });
-                        commands.Add(new BotCommand { Command = "complaint", Description = "Жалобы" });
-                        commands.Add(new BotCommand { Command = "educator", Description = "Назначить дежурного" });
-                        commands.Add(new BotCommand { Command = "notification", Description = "Отправить уведомление" });
-                        commands.Add(new BotCommand { Command = "phonebook", Description = "Телефонный справочник" });
-                        break;
-                }
+                case EmployeeRole.Администратор:
+                    commands.Add(new BotCommand { Command = "repair", Description = "Ремонт" });
+                    commands.Add(new BotCommand { Command = "duty", Description = "Управление графиком" });
+                    commands.Add(new BotCommand { Command = "complaint", Description = "Жалобы" });
+                    commands.Add(new BotCommand { Command = "educator", Description = "Назначить дежурного" });
+                    commands.Add(new BotCommand { Command = "notification", Description = "Отправить уведомление" });
+                    commands.Add(new BotCommand { Command = "phonebook", Description = "Телефонный справочник" });
+                    break;
             }
         }
 
-        await client.SetMyCommands(
-            commands: commands,
-            scope: new BotCommandScopeAllPrivateChats(),
-            languageCode: "ru");
-
-        Console.WriteLine($"Меню команд обновлено для {user.UserId}");
+        await client.SetMyCommands(commands, scope: new BotCommandScopeAllPrivateChats(), languageCode: "ru");
     }
+    #endregion
 
+    #region Обработка команд после авторизации
     private static async Task ProcessAuthorizedCommand(ITelegramBotClient client, Message message, UserSession session)
     {
-        Console.WriteLine($"Обработка команды от {session.User.UserId}");
-
         var command = message.Text?.Split(' ')[0].ToLower();
         session.CurrentCommand = command;
 
-        Console.WriteLine($"Текущая команда: {command}");
+        // Проверка состояния создания заявки
+        if (session.TempData.ContainsKey("repairState"))
+        {
+            await HandleRepairRequestCreation(client, message, session);
+            return;
+        }
 
         switch (command)
         {
@@ -386,318 +306,544 @@ class Program
                 await HandleRepairCommand(client, message, session);
                 break;
 
-            case "/duty":
-                await HandleDutyCommand(client, message, session);
-                break;
-
             case "/complaint":
                 await HandleComplaintCommand(client, message, session);
                 break;
 
-            case "/educator":
-                await HandleEducatorCommand(client, message, session);
-                break;
-
-            case "/phonebook":
-                await HandlePhonebookCommand(client, message.Chat.Id);
-                break;
-
-            case "/notification":
-                await HandleNotificationCommand(client, message, session);
-                break;
+            // Другие команды...
 
             default:
                 await client.SendMessage(message.Chat.Id, "Неизвестная команда. Используйте меню.");
                 break;
         }
     }
+    #endregion
 
+    #region Обработка заявок на ремонт
     private static async Task HandleRepairCommand(ITelegramBotClient client, Message message, UserSession session)
     {
+        // Для студентов - создание заявки
         if (session.User.Role == UserRole.Студент)
         {
-            // Студенты, старосты и председатели могут создавать заявки
-            await client.SendMessage(
-                message.Chat.Id,
-                "Опишите проблему для ремонта:",
-                replyMarkup: new ReplyKeyboardRemove());
-
-            session.TempData["repairState"] = "awaitingDescription";
+            await StartRepairRequestCreation(client, message.Chat.Id);
+            return;
         }
-        else if (session.User.Role == UserRole.Сотрудник)
-        {
-            switch (session.User.Employees.EmployeeRole)
-            {
-                case EmployeeRole.Мастер:
-                    // Мастер видит список заявок
-                    await ShowRepairRequests(message.Chat.Id);
-                    break;
 
-                case EmployeeRole.Администратор:
-                    // Админ может и создавать и просматривать
-                    var keyboard = new ReplyKeyboardMarkup(new[]
-                    {
+        // Для сотрудников - разные варианты в зависимости от роли
+        switch (session.User.Employees.EmployeeRole)
+        {
+            case EmployeeRole.Мастер:
+                await ShowRepairRequestsForMaster(client, message.Chat.Id, session.User.UserId);
+                break;
+
+            case EmployeeRole.Администратор:
+                var keyboard = new ReplyKeyboardMarkup(new[]
+                {
                     new KeyboardButton("Создать заявку"),
                     new KeyboardButton("Просмотреть заявки")
                 })
-                    { ResizeKeyboard = true };
+                { ResizeKeyboard = true };
 
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Выберите действие:",
-                        replyMarkup: keyboard);
-                    break;
+                await client.SendMessage(
+                    chatId: message.Chat.Id,
+                    text: "Выберите действие:",
+                    replyMarkup: keyboard);
+                break;
 
-                default:
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Эта команда недоступна для вашей роли.");
-                    break;
-            }
-        }
-    }
-
-    private static async Task HandleDutyCommand(ITelegramBotClient client, Message message, UserSession session)
-    {
-        if (session.User.Role == UserRole.Студент)
-        {
-            var student = session.User.Students;
-
-            if (student.StudentRole == StudentRole.Студент)
-            {
-                // Обычный студент - просмотр своего графика
-                await ShowStudentDutySchedule(message.Chat.Id, session.User.UserId);
-            }
-            else if (student.StudentRole == StudentRole.Староста_этажа)
-            {
-                // Староста - управление графиком своего этажа
-                await ShowFloorDutyManagement(message.Chat.Id, student.Floor);
-            }
-            else if (student.StudentRole == StudentRole.Председатель_общежития)
-            {
-                // Председатель - управление всем общежитием
-                await ShowDormitoryDutyManagement(message.Chat.Id);
-            }
-        }
-        else if (session.User.Role == UserRole.Сотрудник)
-        {
-            switch (session.User.Employees.EmployeeRole)
-            {
-                case EmployeeRole.Мастер:
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Эта команда недоступна для мастера.");
-                    break;
-
-                case EmployeeRole.Воспитатель:
-                case EmployeeRole.Дежурный_воспитатель:
-                    // Просмотр графика
-                    await ShowDutySchedule(message.Chat.Id);
-                    break;
-
-                case EmployeeRole.Администратор:
-                    // Полное управление
-                    await ShowDormitoryDutyManagement(message.Chat.Id);
-                    break;
-            }
-        }
-    }
-
-    private static async Task HandleComplaintCommand(ITelegramBotClient client, Message message, UserSession session)
-    {
-        if (session.User.Role == UserRole.Студент)
-        {
-            // Все студенты могут жаловаться
-            await client.SendMessage(
-                message.Chat.Id,
-                "Опишите вашу жалобу:",
-                replyMarkup: new ReplyKeyboardRemove());
-
-            session.TempData["complaintState"] = "awaitingDescription";
-        }
-        else if (session.User.Role == UserRole.Сотрудник)
-        {
-            switch (session.User.Employees.EmployeeRole)
-            {
-                case EmployeeRole.Мастер:
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Эта команда недоступна для мастера.");
-                    break;
-
-                case EmployeeRole.Воспитатель:
-                case EmployeeRole.Дежурный_воспитатель:
-                    // Просмотр жалоб
-                    await ShowComplaintsList(message.Chat.Id);
-                    break;
-
-                case EmployeeRole.Администратор:
-                    // Админ может и жаловаться и просматривать
-                    var keyboard = new ReplyKeyboardMarkup(new[]
-                    {
-                    new KeyboardButton("Отправить жалобу"),
-                    new KeyboardButton("Просмотреть жалобы")
-                })
-                    { ResizeKeyboard = true };
-
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Выберите действие:",
-                        replyMarkup: keyboard);
-                    break;
-            }
-        }
-    }
-
-    private static async Task HandleEducatorCommand(ITelegramBotClient client, Message message, UserSession session)
-    {
-        if (session.User.Role == UserRole.Студент)
-        {
-            // Студенты только просматривают
-            await ShowCurrentEducator(message.Chat.Id);
-        }
-        else if (session.User.Role == UserRole.Сотрудник)
-        {
-            switch (session.User.Employees.EmployeeRole)
-            {
-                case EmployeeRole.Мастер:
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Эта команда недоступна для мастера.");
-                    break;
-
-                case EmployeeRole.Воспитатель:
-                case EmployeeRole.Дежурный_воспитатель:
-                case EmployeeRole.Администратор:
-                    // Могут назначать и просматривать
-                    var keyboard = new InlineKeyboardMarkup(new[]
-                    {
-                    InlineKeyboardButton.WithCallbackData("Просмотреть", "educator_view"),
-                    InlineKeyboardButton.WithCallbackData("Назначить", "educator_set")
-                });
-
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Выберите действие:",
-                        replyMarkup: keyboard);
-                    break;
-            }
-        }
-    }
-
-    private static async Task HandlePhonebookCommand(ITelegramBotClient client, long chatId)
-    {
-        // Для всех одинаковая реализация
-        await ShowPhonebook(chatId);
-    }
-
-    private static async Task HandleNotificationCommand(ITelegramBotClient client, Message message, UserSession session)
-    {
-        if (session.User.Role == UserRole.Студент)
-        {
-            var student = session.User.Students;
-
-            if (student.StudentRole == StudentRole.Староста_этажа)
-            {
-                // Староста может отправлять уведомления своему этажу
-                await SendNotificationToFloor(message.Chat.Id, student.Floor);
-            }
-            else if (student.StudentRole == StudentRole.Председатель_общежития)
-            {
-                // Председатель - всему общежитию
-                await SendNotificationToDormitory(message.Chat.Id);
-            }
-            else
-            {
+            default:
                 await client.SendMessage(
                     message.Chat.Id,
-                    "Эта команда недоступна для студентов.");
+                    "⛔ Эта команда недоступна для вашей роли");
+                break;
+        }
+    }
+
+    private static async Task StartRepairRequestCreation(ITelegramBotClient client, long chatId)
+    {
+        var keyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new KeyboardButton("Электрика"),
+            new KeyboardButton("Сантехника"),
+            new KeyboardButton("Мебель")
+        })
+        {
+            ResizeKeyboard = true,
+            OneTimeKeyboard = true
+        };
+
+        await client.SendMessage(
+            chatId: chatId,
+            text: "Выберите тип проблемы:",
+            replyMarkup: keyboard);
+
+        if (!_userSessions.TryGetValue(chatId, out var session))
+        {
+            session = new UserSession();
+            _userSessions[chatId] = session;
+        }
+
+        session.TempData["repairState"] = "awaitingProblemType";
+    }
+
+    private static async Task HandleRepairRequestCreation(ITelegramBotClient client, Message message, UserSession session)
+    {
+        var chatId = message.Chat.Id;
+
+        if (session.TempData["repairState"].ToString() == "awaitingProblemType")
+        {
+            // Сохраняем тип проблемы
+            session.TempData["problemType"] = message.Text;
+
+            await client.SendMessage(
+                chatId: chatId,
+                text: "Укажите место, где требуется ремонт:",
+                replyMarkup: new ReplyKeyboardRemove());
+
+            session.TempData["repairState"] = "awaitingLocation";
+        }
+        else if (session.TempData["repairState"].ToString() == "awaitingLocation")
+        {
+            // Сохраняем местоположение
+            session.TempData["location"] = message.Text;
+
+            await client.SendMessage(
+                chatId: chatId,
+                text: "Опишите проблему подробнее:");
+
+            session.TempData["repairState"] = "awaitingComment";
+        }
+        else if (session.TempData["repairState"].ToString() == "awaitingComment")
+        {
+            // Завершение создания заявки
+            var comment = message.Text ?? "Нет комментария";
+            var problemType = session.TempData["problemType"].ToString();
+            var location = session.TempData["location"].ToString();
+
+            // Сохраняем заявку в базу данных
+            using var db = new RepairRequestsContext();
+            var request = new RepairRequests
+            {
+                UserId = session.User.UserId,
+                Location = location,
+                Problem = Enum.Parse<ProblemType>(problemType),
+                UserComment = comment,
+                Status = RequestStatus.Новая
+            };
+
+            db.RepairRequests.Add(request);
+            await db.SaveChangesAsync();
+
+            // Отправляем подтверждение пользователю
+            await client.SendMessage(
+                chatId: chatId,
+                text: $"✅ Заявка на ремонт создана!\n\n" +
+                     $"Тип: {problemType}\n" +
+                     $"Место: {location}\n" +
+                     $"Комментарий: {comment}\n\n" +
+                     $"Номер заявки: #{request.RequestId}");
+
+            // Очищаем временные данные
+            session.TempData.Remove("repairState");
+            session.TempData.Remove("problemType");
+            session.TempData.Remove("location");
+        }
+    }
+
+    private static async Task ShowRepairRequestsForMaster(ITelegramBotClient client, long chatId, int masterId)
+    {
+        using var db = new RepairRequestsContext();
+        var requests = await db.RepairRequests
+            .Where(r => r.Status == RequestStatus.Новая || r.Status == RequestStatus.В_процессе)
+            .Include(r => r.Users)
+            .ToListAsync();
+
+        if (!requests.Any())
+        {
+            await client.SendMessage(chatId, "Нет активных заявок на ремонт");
+            return;
+        }
+
+        var message = "📋 Список заявок на ремонт:\n\n";
+        var keyboardButtons = new List<InlineKeyboardButton[]>();
+
+        foreach (var request in requests)
+        {
+            var statusEmoji = request.Status == RequestStatus.Новая ? "🆕" : "🛠️";
+            message += $"{statusEmoji} #{request.RequestId} - {request.Problem} - {request.Location} - {request.Status}\n";
+
+            if (request.Status == RequestStatus.Новая)
+            {
+                keyboardButtons.Add(new[]
+                {
+                    InlineKeyboardButton.WithCallbackData($"Принять #{request.RequestId}", $"accept_{request.RequestId}"),
+                    InlineKeyboardButton.WithCallbackData($"Отклонить #{request.RequestId}", $"reject_{request.RequestId}")
+                });
             }
+            else if (request.Status == RequestStatus.В_процессе)
+            {
+                keyboardButtons.Add(new[]
+                {
+                    InlineKeyboardButton.WithCallbackData($"Завершить #{request.RequestId}", $"complete_{request.RequestId}")
+                });
+            }
+        }
+
+        var keyboard = new InlineKeyboardMarkup(keyboardButtons);
+
+        await client.SendMessage(
+            chatId: chatId,
+            text: message,
+            replyMarkup: keyboard);
+    }
+
+    private static async Task HandleRepairCallback(ITelegramBotClient client, CallbackQuery callbackQuery, UserSession session)
+    {
+        var data = callbackQuery.Data;
+        var chatId = callbackQuery.Message.Chat.Id;
+        var requestId = int.Parse(data.Split('_')[1]);
+
+        using var db = new RepairRequestsContext();
+        var request = await db.RepairRequests.FindAsync(requestId);
+
+        if (request == null)
+        {
+            await client.AnswerCallbackQuery(callbackQuery.Id, "Заявка не найдена");
+            return;
+        }
+
+        if (data.StartsWith("accept_"))
+        {
+            request.Status = RequestStatus.В_процессе;
+            request.MasterId = session.User.UserId;
+            request.LastStatusChange = DateTime.Now;
+            await db.SaveChangesAsync();
+
+            await client.AnswerCallbackQuery(callbackQuery.Id, "Заявка принята в работу");
+            await client.EditMessageText(
+                chatId: chatId,
+                messageId: callbackQuery.Message.MessageId,
+                text: callbackQuery.Message.Text + $"\n\n✅ Вы приняли заявку #{requestId}",
+                replyMarkup: null);
+
+            // Уведомление студента об изменении статуса
+            await NotifyUserAboutRequestStatus(client, request.UserId, requestId, "принята в работу");
+        }
+        else if (data.StartsWith("reject_"))
+        {
+            request.Status = RequestStatus.Отклонена;
+            request.LastStatusChange = DateTime.Now;
+            await db.SaveChangesAsync();
+
+            await client.AnswerCallbackQuery(callbackQuery.Id, "Заявка отклонена");
+            await client.EditMessageText(
+                chatId: chatId,
+                messageId: callbackQuery.Message.MessageId,
+                text: callbackQuery.Message.Text + $"\n\n❌ Вы отклонили заявку #{requestId}",
+                replyMarkup: null);
+
+            await NotifyUserAboutRequestStatus(client, request.UserId, requestId, "отклонена");
+        }
+        else if (data.StartsWith("complete_"))
+        {
+            request.Status = RequestStatus.Завершена;
+            request.LastStatusChange = DateTime.Now;
+            await db.SaveChangesAsync();
+
+            await client.AnswerCallbackQuery(callbackQuery.Id, "Заявка завершена");
+            await client.EditMessageText(
+                chatId: chatId,
+                messageId: callbackQuery.Message.MessageId,
+                text: callbackQuery.Message.Text + $"\n\n🏁 Заявка #{requestId} завершена",
+                replyMarkup: null);
+
+            await NotifyUserAboutRequestStatus(client, request.UserId, requestId, "завершена");
+        }
+    }
+
+    private static async Task NotifyUserAboutRequestStatus(ITelegramBotClient client, int userId, int requestId, string statusText)
+    {
+        using var db = new UsersContext();
+        var user = await db.Users.FindAsync(userId);
+
+        if (user?.TelegramId != null)
+        {
+            await client.SendMessage(
+                chatId: user.TelegramId.Value,
+                text: $"ℹ Статус вашей заявки #{requestId} изменен: {statusText}");
+        }
+    }
+    #endregion
+
+    #region Модуль жалоб
+
+    // Вспомогательные методы для работы с жалобами
+    private static async Task HandleComplaintCommand(ITelegramBotClient client, Message message, UserSession session)
+    {
+        // Проверяем роль пользователя
+        if (session.User.Role == UserRole.Студент)
+        {
+            await StartComplaintProcess(client, message.Chat.Id);
         }
         else if (session.User.Role == UserRole.Сотрудник)
         {
             switch (session.User.Employees.EmployeeRole)
             {
-                case EmployeeRole.Мастер:
-                    await client.SendMessage(
-                        message.Chat.Id,
-                        "Эта команда недоступна для мастера.");
-                    break;
-
                 case EmployeeRole.Воспитатель:
                 case EmployeeRole.Дежурный_воспитатель:
                 case EmployeeRole.Администратор:
-                    await SendNotificationToDormitory(message.Chat.Id);
+                    await ShowComplaintsList(client, message.Chat.Id);
+                    break;
+
+                case EmployeeRole.Мастер:
+                    await client.SendMessage(
+                        message.Chat.Id,
+                        "⛔ У вас нет доступа к просмотру жалоб",
+                        replyMarkup: new ReplyKeyboardRemove());
                     break;
             }
         }
     }
 
-    // Вспомогательные методы для каждой команды
-    private static async Task ShowRepairRequests(long chatId)
+    private static async Task StartComplaintProcess(ITelegramBotClient client, long chatId)
     {
-        // Реализация показа заявок
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+        new[]
+        {
+            InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"),
+            InlineKeyboardButton.WithCallbackData("Открыто", "complaint_public")
+        }
+    });
+
+        await client.SendMessage(
+            chatId: chatId,
+            text: "Выберите тип жалобы:",
+            replyMarkup: keyboard);
+
+        if (!_userSessions.TryGetValue(chatId, out var session))
+        {
+            session = new UserSession();
+            _userSessions[chatId] = session;
+        }
+        session.TempData["complaintState"] = "awaitingType";
     }
 
-    private static async Task ShowStudentDutySchedule(long chatId, int userId)
+    private static async Task HandleComplaintCallback(ITelegramBotClient client, CallbackQuery callbackQuery, UserSession session)
     {
-        // Реализация показа графика для студента
+        var chatId = callbackQuery.Message.Chat.Id;
+        var data = callbackQuery.Data;
+
+        if (data == "complaint_anonymous" || data == "complaint_public")
+        {
+            var isAnonymous = data == "complaint_anonymous";
+
+            session.TempData["complaintState"] = "awaitingText";
+            session.TempData["isAnonymous"] = isAnonymous;
+
+            await client.EditMessageText(
+                chatId: chatId,
+                messageId: callbackQuery.Message.MessageId,
+                text: "✍ Напишите текст вашей жалобы:",
+                replyMarkup: null);
+        }
+        else if (data.StartsWith("complaint_action_"))
+        {
+            var parts = data.Split('_');
+            var action = parts[2];
+            var complaintId = int.Parse(parts[3]);
+
+            using var db = new ComplaintsContext();
+            var complaint = await db.Complaints.FindAsync(complaintId);
+
+            if (complaint == null)
+            {
+                await client.AnswerCallbackQuery(callbackQuery.Id, "Жалоба не найдена");
+                return;
+            }
+
+            switch (action)
+            {
+                case "review":
+                    complaint.Status = ComplaintStatus.На_рассмотрении;
+                    complaint.ReviewedBy = session.User.UserId;
+                    break;
+
+                case "complete":
+                    complaint.Status = ComplaintStatus.Выполнена;
+                    break;
+
+                case "reject":
+                    complaint.Status = ComplaintStatus.Отклонена;
+                    break;
+            }
+
+            complaint.LastStatusChange = DateTime.Now;
+            await db.SaveChangesAsync();
+
+            await client.AnswerCallbackQuery(callbackQuery.Id, $"Статус изменен на: {complaint.Status}");
+            await client.EditMessageText(
+                chatId: chatId,
+                messageId: callbackQuery.Message.MessageId,
+                text: callbackQuery.Message.Text + $"\n\nСтатус изменен: {complaint.Status}",
+                replyMarkup: null);
+
+            // Уведомление автора (если не анонимно)
+            if (complaint.UserId.HasValue && complaint.UserId.Value != session.User.UserId)
+            {
+                await NotifyUserAboutComplaintStatus(client, complaint.UserId.Value, complaintId, complaint.Status);
+            }
+        }
     }
 
-    private static async Task ShowFloorDutyManagement(long chatId, int floor)
+    private static async Task ProcessComplaintText(ITelegramBotClient client, Message message, UserSession session)
     {
-        // Реализация управления графиком этажа
+        var chatId = message.Chat.Id;
+        var complaintText = message.Text;
+        var isAnonymous = (bool)session.TempData["isAnonymous"];
+
+        using var db = new ComplaintsContext();
+        var complaint = new Complaints
+        {
+            UserId = isAnonymous ? null : (int?)session.User.UserId,
+            ComplaintText = complaintText,
+            Status = ComplaintStatus.Новая,
+            SubmissionDate = DateTime.Now,
+            LastStatusChange = DateTime.Now
+        };
+
+        await db.Complaints.AddAsync(complaint);
+        await db.SaveChangesAsync();
+
+        session.TempData.Remove("complaintState");
+        session.TempData.Remove("isAnonymous");
+
+        await client.SendMessage(
+            chatId: chatId,
+            text: $"✅ Жалоба #{complaint.ComplaintId} успешно отправлена!\n" +
+                  $"Тип: {(isAnonymous ? "Анонимно" : "Открыто")}");
+
+        // Уведомление воспитателей
+        await NotifyEducatorsAboutNewComplaint(client, complaint.ComplaintId);
     }
 
-    private static async Task ShowDormitoryDutyManagement(long chatId)
+    private static async Task ShowComplaintsList(ITelegramBotClient client, long chatId)
     {
-        // Реализация
+        using var db = new ComplaintsContext();
+        var complaints = await db.Complaints
+            .Include(c => c.Users)
+            .Where(c => c.Status != ComplaintStatus.Выполнена && c.Status != ComplaintStatus.Отклонена)
+            .OrderByDescending(c => c.SubmissionDate)
+            .ToListAsync();
+
+        if (!complaints.Any())
+        {
+            await client.SendMessage(chatId, "Нет активных жалоб");
+            return;
+        }
+
+        var message = "📋 Список жалоб:\n\n";
+        var keyboardButtons = new List<InlineKeyboardButton[]>();
+
+        foreach (var complaint in complaints)
+        {
+            var author = complaint.UserId == null ? "Аноним" : complaint.Users?.FullName ?? "Неизвестно";
+            message += $"#{complaint.ComplaintId} - {author} - {complaint.Status}\n";
+
+            var buttons = new List<InlineKeyboardButton>();
+            
+            if (complaint.Status == ComplaintStatus.Новая)
+            {
+                keyboardButtons.Add(new[]
+                {
+                    InlineKeyboardButton.WithCallbackData($"Взять в работу #{complaint.ComplaintId}", $"complaint_action_review_{complaint.ComplaintId}"),
+                    InlineKeyboardButton.WithCallbackData($"Отклонить #{complaint.ComplaintId}", $"complaint_action_reject_{complaint.ComplaintId}")
+                });                
+            }
+            else if (complaint.Status == ComplaintStatus.На_рассмотрении)
+            {
+                keyboardButtons.Add(new[]
+                {
+                    InlineKeyboardButton.WithCallbackData($"Завершить #{complaint.ComplaintId}", $"complaint_action_complete_{complaint.ComplaintId}")
+                });
+            }
+
+            keyboardButtons.Add(buttons.ToArray());
+        }
+
+        var keyboard = new InlineKeyboardMarkup(keyboardButtons);
+        await client.SendMessage(chatId, message, replyMarkup: keyboard);
     }
 
-    private static async Task ShowDutySchedule(long chatId)
+    private static async Task NotifyEducatorsAboutNewComplaint(ITelegramBotClient client, int complaintId)
     {
-        // Реализация
+        using var db = new UsersContext();
+        var educators = await db.Users
+            .Include(u => u.Employees)
+            .Where(u => u.Role == UserRole.Сотрудник &&
+                       (u.Employees.EmployeeRole == EmployeeRole.Воспитатель ||
+                        u.Employees.EmployeeRole == EmployeeRole.Дежурный_воспитатель ||
+                        u.Employees.EmployeeRole == EmployeeRole.Администратор) &&
+                       u.TelegramId != null)
+            .ToListAsync();
+
+        foreach (var educator in educators)
+        {
+            await client.SendMessage(
+                chatId: educator.TelegramId.Value,
+                text: $"❗ Поступила новая жалоба #{complaintId}");
+        }
     }
 
-    private static async Task ShowComplaintsList(long chatId)
+    private static async Task NotifyUserAboutComplaintStatus(ITelegramBotClient client, int userId, int complaintId, ComplaintStatus status)
     {
-        // Реализация
+        using var db = new UsersContext();
+        var user = await db.Users.FindAsync(userId);
+
+        if (user?.TelegramId != null)
+        {
+            await client.SendMessage(
+                chatId: user.TelegramId.Value,
+                text: $"ℹ Статус вашей жалобы #{complaintId} изменен: {status}");
+        }
     }
 
-    private static async Task ShowCurrentEducator(long chatId)
-    {
-        // Реализация 
-    }
+    #endregion
 
-    private static async Task ShowPhonebook(long chatId)
-    {
-        // Реализация
-    }
-
-    private static async Task SendNotificationToFloor(long chatId, int floor)
-    {
-        // Реализация
-    }
-    private static async Task SendNotificationToDormitory(long chatId)
-    {
-        // Реализация
-    }
-
+    #region Обработка CallbackQuery
     private static async Task HandleCallbackQuery(ITelegramBotClient client, CallbackQuery callbackQuery)
     {
-        
-    }    
+        var chatId = callbackQuery.Message.Chat.Id;
+
+        if (!_userSessions.TryGetValue(chatId, out var session))
+        {
+            await client.AnswerCallbackQuery(callbackQuery.Id, "Сессия не найдена");
+            return;
+        }
+
+        // Обработка заявок на ремонт
+        if (callbackQuery.Data.StartsWith("accept_") ||
+            callbackQuery.Data.StartsWith("reject_") ||
+            callbackQuery.Data.StartsWith("complete_"))
+        {
+            await HandleRepairCallback(client, callbackQuery, session);
+            return;
+        }
+
+        //Обработка жалоб
+        if (callbackQuery.Data.StartsWith("complaint_"))
+        {
+            await HandleComplaintCallback(client, callbackQuery, session);
+            return;
+        }
+
+        // Обработка других callback'ов...
+        await client.AnswerCallbackQuery(callbackQuery.Id, "Команда в разработке");
+    }
+    #endregion
 
     private static Task ErrorHandler(ITelegramBotClient botClient, Exception error, CancellationToken cancellationToken)
     {
-        var errorMessage = error switch
-        {
-            ApiRequestException apiRequestException
-                => $"Telegram API Error:\n[{apiRequestException.ErrorCode}]\n{apiRequestException.Message}",
-            _ => error.ToString()
-        };
-
-        Console.WriteLine($"⚠ ОШИБКА: {errorMessage}");
+        Console.WriteLine($"⚠ ОШИБКА: {error}");
         return Task.CompletedTask;
     }
 }

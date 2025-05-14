@@ -30,7 +30,7 @@ namespace DormitoryPAT.Models
         [Column(TypeName = "ENUM('Новая', 'В_процессе', 'Завершена', 'Отклонена')")]
         public RequestStatus Status { get; set; }
 
-        public string MasterComment { get; set; }
+        public string? MasterComment { get; set; }
 
         [DatabaseGenerated(DatabaseGeneratedOption.Computed)]
         public DateTime RequestDate { get; set; }
