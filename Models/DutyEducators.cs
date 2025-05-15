@@ -21,6 +21,7 @@ namespace DormitoryPAT.Models
         public string ContactNumber { get; set; }
 
         [Required]
+        [Column(TypeName = "ENUM('Floor2_4', 'Floor5_7')")]
         public EducatorFloor Floor { get; set; }
 
         // Навигационное свойство
@@ -29,9 +30,9 @@ namespace DormitoryPAT.Models
 
     public enum EducatorFloor
     {
-        [Display(Name = "2-4")]
+        [Display(Name = "Floor2_4")]
         Floor2_4,
-        [Display(Name = "5-7")]
+        [Display(Name = "Floor5_7")]
         Floor5_7
     }
 }

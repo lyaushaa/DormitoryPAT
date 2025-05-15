@@ -141,6 +141,12 @@ class Program
             return;
         }
 
+        if (session.TempData.ContainsKey("educatorState") && session.TempData["educatorState"].ToString() == "awaitingPhone")
+        {
+            await ProcessEducatorPhoneInput(client, message, session);
+            return;
+        }
+
         // Обработка команд после авторизации
         Console.WriteLine($"[{DateTime.Now}] Обработка команды от авторизованного пользователя {session.User.UserId}");
         await ProcessAuthorizedCommand(client, message, session);
@@ -371,6 +377,10 @@ class Program
 
             case "/payment":
                 await HandleDormPaymentCommand(client, message.Chat.Id);
+                break;
+
+            case "/educator":
+                await HandleEducatorCommand(client, message, session);
                 break;
 
             default:
@@ -1045,6 +1055,256 @@ class Program
 
     #endregion
 
+    #region Модуль дежурного воспитателя (обновленная версия)
+
+    private static async Task HandleEducatorCommand(ITelegramBotClient client, Message message, UserSession session)
+    {
+        Console.WriteLine($"[{DateTime.Now}] Обработка команды educator для пользователя {session.User.UserId}");
+
+        if (session.User.Role == UserRole.Студент)
+        {
+            await ShowTodayEducatorsInfo(client, message.Chat.Id);
+        }
+        else if (session.User.Role == UserRole.Сотрудник)
+        {
+            switch (session.User.Employees.EmployeeRole)
+            {
+                case EmployeeRole.Дежурный_воспитатель:
+                case EmployeeRole.Администратор:
+                    await ShowEducatorManagementMenu(client, message.Chat.Id, session);
+                    break;
+
+                case EmployeeRole.Мастер:
+                    await client.SendMessage(
+                        message.Chat.Id,
+                        "⛔ Эта команда недоступна для мастера",
+                        replyMarkup: new ReplyKeyboardRemove());
+                    break;
+
+                default:
+                    await ShowTodayEducatorsInfo(client, message.Chat.Id);
+                    break;
+            }
+        }
+    }
+
+    private static async Task ShowTodayEducatorsInfo(ITelegramBotClient client, long chatId)
+    {
+        Console.WriteLine($"[{DateTime.Now}] Показ информации о дежурных воспитателях");
+
+        try
+        {
+            using var db = new DutyEducatorsContext();
+            var today = DateTime.Today;
+            var duties = await db.DutyEducators
+                .Include(d => d.Employees)
+                .ThenInclude(e => e.Users)
+                .Where(d => d.Date == today)
+                .OrderBy(d => d.Floor)
+                .ToListAsync();
+
+            if (!duties.Any())
+            {
+                await client.SendMessage(
+                    chatId,
+                    "📌 На сегодня дежурные воспитатели не назначены");
+                return;
+            }
+
+            var message = new StringBuilder($"👩‍🏫 Дежурные воспитатели на {today:dd.MM.yyyy}:\n\n");
+
+            foreach (var duty in duties)
+            {
+                message.AppendLine($"🏢 Этажи: {GetFloorDisplayName(duty.Floor)}");
+                message.AppendLine($"👤 {duty.Employees.Users.FullName}");
+                message.AppendLine($"📞 Контакт: {duty.ContactNumber}\n");
+            }
+
+            await client.SendMessage(chatId, message.ToString());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{DateTime.Now}] Ошибка при получении информации: {ex}");
+            await client.SendMessage(
+                chatId,
+                "⚠ Произошла ошибка при получении информации о дежурных воспитателях");
+        }
+    }
+
+    private static string GetFloorDisplayName(EducatorFloor floor)
+    {
+        return floor switch
+        {
+            EducatorFloor.Floor2_4 => "2-4",
+            EducatorFloor.Floor5_7 => "5-7",
+            _ => floor.ToString()
+        };
+    }
+
+    private static async Task ShowEducatorManagementMenu(ITelegramBotClient client, long chatId, UserSession session)
+    {
+        Console.WriteLine($"[{DateTime.Now}] Показ меню управления дежурствами для {session.User.UserId}");
+
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+        new[]
+        {
+            InlineKeyboardButton.WithCallbackData("Назначить на этажи 2-4", "educator_setduty_2-4"),
+            InlineKeyboardButton.WithCallbackData("Назначить на этажи 5-7", "educator_setduty_5-7")
+        },
+        new[]
+        {
+            InlineKeyboardButton.WithCallbackData("Просмотреть дежурных", "educator_view")
+        }
+    });
+
+        await client.SendMessage(
+            chatId,
+            "Управление дежурными воспитателями:",
+            replyMarkup: keyboard);
+    }
+
+    private static async Task HandleEducatorCallback(ITelegramBotClient client, CallbackQuery callbackQuery, UserSession session)
+    {
+        var chatId = callbackQuery.Message.Chat.Id;
+        var data = callbackQuery.Data;
+
+        Console.WriteLine($"[{DateTime.Now}] Обработка callback educator: {data}");
+
+        try
+        {
+            if (data == "educator_view")
+            {
+                await ShowTodayEducatorsInfo(client, chatId);
+                await client.AnswerCallbackQuery(callbackQuery.Id);
+            }
+            else if (data.StartsWith("educator_setduty_"))
+            {
+                var floorStr = data.Split('_')[2];
+                var floor = floorStr == "2-4" ? EducatorFloor.Floor2_4 : EducatorFloor.Floor5_7;
+
+                session.TempData["educatorFloor"] = floor;
+                session.TempData["educatorState"] = "awaitingConfirmation";
+
+                var message = $"Вы выбрали этажи: {floorStr}\n" +
+                             $"Использовать ваш номер телефона ({session.User.PhoneNumber}) для контакта?";
+
+                var keyboard = new InlineKeyboardMarkup(new[]
+                {
+                new[]
+                {
+                    InlineKeyboardButton.WithCallbackData("Да", $"educator_useownphone_{floorStr}_yes"),
+                    InlineKeyboardButton.WithCallbackData("Нет, ввести другой", $"educator_useownphone_{floorStr}_no")
+                }
+            });
+
+                await client.EditMessageText(
+                    chatId: chatId,
+                    messageId: callbackQuery.Message.MessageId,
+                    text: message,
+                    replyMarkup: keyboard);
+
+                await client.AnswerCallbackQuery(callbackQuery.Id);
+            }
+            else if (data.StartsWith("educator_useownphone_"))
+            {
+                var parts = data.Split('_');
+                var floorStr = parts[2];
+                var useOwnPhone = parts[3] == "yes";
+                var floor = floorStr == "2-4" ? EducatorFloor.Floor2_4 : EducatorFloor.Floor5_7;
+
+                if (useOwnPhone)
+                {
+                    await CompleteDutySetup(client, chatId, session, floor, session.User.PhoneNumber.ToString());
+                }
+                else
+                {
+                    session.TempData["educatorState"] = "awaitingPhone";
+                    session.TempData["educatorFloor"] = floor;
+                    await client.EditMessageText(
+                        chatId: chatId,
+                        messageId: callbackQuery.Message.MessageId,
+                        text: "Введите контактный телефон для дежурства:",
+                        replyMarkup: null);
+                }
+
+                await client.AnswerCallbackQuery(callbackQuery.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{DateTime.Now}] Ошибка обработки callback: {ex}");
+            await client.AnswerCallbackQuery(callbackQuery.Id, "⚠ Ошибка обработки команды");
+        }
+    }
+
+    private static async Task CompleteDutySetup(ITelegramBotClient client, long chatId, UserSession session, EducatorFloor floor, string phoneNumber)
+    {
+        Console.WriteLine($"[{DateTime.Now}] Завершение настройки дежурства для {session.User.UserId} на этажи {floor}");
+
+        try
+        {
+            using var db = new DutyEducatorsContext();
+            var today = DateTime.Today;
+
+            // Проверяем существующее дежурство для этих этажей
+            var existingDuty = await db.DutyEducators
+                .FirstOrDefaultAsync(d => d.Date == today && d.Floor == floor);
+
+            if (existingDuty != null)
+            {
+                // Обновляем существующее дежурство
+                existingDuty.UserId = session.User.UserId;
+                existingDuty.ContactNumber = phoneNumber;
+            }
+            else
+            {
+                // Создаем новое дежурство
+                var duty = new DutyEducators
+                {
+                    Date = today,
+                    UserId = session.User.UserId,
+                    ContactNumber = phoneNumber,
+                    Floor = floor
+                };
+                await db.DutyEducators.AddAsync(duty);
+            }
+
+            await db.SaveChangesAsync();
+
+            session.TempData.Remove("educatorState");
+            session.TempData.Remove("educatorFloor");
+
+            await client.SendMessage(
+                chatId: chatId,
+                text: $"✅ Вы назначены дежурным воспитателем на {today:dd.MM.yyyy}\n" +
+                      $"Этажи: {GetFloorDisplayName(floor)}\n" +
+                      $"Контакт: {phoneNumber}");
+
+            Console.WriteLine($"[{DateTime.Now}] Дежурство успешно сохранено");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{DateTime.Now}] Ошибка сохранения дежурства: {ex}");
+            await client.SendMessage(
+                chatId: chatId,
+                text: "⚠ Произошла ошибка при сохранении дежурства");
+        }
+    }
+
+    private static async Task ProcessEducatorPhoneInput(ITelegramBotClient client, Message message, UserSession session)
+    {
+        if (session.TempData.TryGetValue("educatorState", out var state) &&
+            state.ToString() == "awaitingPhone" &&
+            session.TempData.TryGetValue("educatorFloor", out var floorObj) &&
+            floorObj is EducatorFloor floor)
+        {
+            await CompleteDutySetup(client, message.Chat.Id, session, floor, message.Text);
+        }
+    }
+
+    #endregion
+
     #region Обработка CallbackQuery
     private static async Task HandleCallbackQuery(ITelegramBotClient client, CallbackQuery callbackQuery)
     {
@@ -1069,6 +1329,12 @@ class Program
         if (callbackQuery.Data.StartsWith("complaint_"))
         {
             await HandleComplaintCallback(client, callbackQuery, session);
+            return;
+        }
+
+        if (callbackQuery.Data.StartsWith("educator_"))
+        {
+            await HandleEducatorCallback(client, callbackQuery, session);
             return;
         }
 
