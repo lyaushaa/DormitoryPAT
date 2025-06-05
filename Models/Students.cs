@@ -6,8 +6,14 @@ namespace DormitoryPAT.Models
     public class Students
     {
         [Key]
-        [ForeignKey("Users")]
-        public int StudentId { get; set; }
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+        public long StudentId { get; set; }
+
+        [Required]
+        public string PhoneNumber { get; set; }
+
+        [Required]
+        public string FIO { get; set; }
 
         [Required]
         public int Floor { get; set; }
@@ -19,11 +25,20 @@ namespace DormitoryPAT.Models
         public DateTime DateOfBirth { get; set; }
 
         [Required]
-        [Column(TypeName = "ENUM('Студент', 'Староста этажа', 'Председатель общежития')")]
-        public StudentRole StudentRole { get; set; } = StudentRole.Студент;
+        [Column(TypeName = "ENUM('Студент', 'Староста_этажа', 'Председатель_общежития')")]
+        public StudentRole StudentRole { get; set; }
 
-        // Навигационное свойство
-        public Users Users { get; set; }
+        [ForeignKey("TelegramAuth")]
+        public long? TelegramId { get; set; }
+
+        [NotMapped]
+        public string StudentsRoleDisplay => StudentRole switch
+        {
+            StudentRole.Студент => "Студент",
+            StudentRole.Староста_этажа => "Староста этажа",
+            StudentRole.Председатель_общежития => "Председатель общежития",            
+            _ => StudentRole.ToString()
+        };
     }
 
     public enum StudentRole

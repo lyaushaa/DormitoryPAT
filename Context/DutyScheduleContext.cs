@@ -1,16 +1,21 @@
 ﻿using DormitoryPAT.Context.Database;
 using DormitoryPAT.Models;
 using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace DormitoryPAT.Context
 {
-    public class DutyEducatorsContext : DbContext
+    public class DutyScheduleContext : DbContext
     {
-        public DbSet<DutyEducators> DutyEducators { get; set; }
-        public DutyEducatorsContext()
+        public DbSet<DutySchedule> DutySchedule { get; set; }
+        public DutyScheduleContext()
         {
             Database.EnsureCreated();
-            DutyEducators.Load();
+            DutySchedule.Load();
         }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {

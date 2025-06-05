@@ -7,11 +7,7 @@ namespace DormitoryPAT.Models
     {
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-        public int ScheduleId { get; set; }
-
-        [Required]
-        [ForeignKey("Users")]
-        public int UserId { get; set; }
+        public long ScheduleId { get; set; }
 
         [Required]
         public int Floor { get; set; }
@@ -21,8 +17,5 @@ namespace DormitoryPAT.Models
 
         [Required]
         public int Room { get; set; }
-
-        // Навигационное свойство
-        public Users Users { get; set; }
     }
 }
