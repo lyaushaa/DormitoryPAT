@@ -18,7 +18,7 @@ namespace DormitoryPAT.Models
         [Column(TypeName = "ENUM('Электрика', 'Сантехника', 'Мебель')")]
         public ProblemType Problem { get; set; }
         public string? UserComment { get; set; }
-        [ForeignKey("Employees")]
+        [ForeignKey("Master")]
         public long? MasterId { get; set; }
         [Required]
         [Column(TypeName = "ENUM('Создана', 'В_обработке', 'Ожидает_запчастей', 'Завершена', 'Отклонена')")]
