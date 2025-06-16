@@ -16,7 +16,7 @@ namespace DormitoryPAT.Models
         public string FIO { get; set; }
 
         [Required]
-        [Column(TypeName = "ENUM('Мастер', 'Воспитатель', 'Заведующий_общежитием', 'Администратор')")]
+        [Column(TypeName = "ENUM('Мастер', 'Воспитатель', 'Дежурный_воспитатель', 'Заведующий_общежитием', 'Администратор')")]
         public EmployeeRole EmployeeRole { get; set; }
 
         [Required]
@@ -25,8 +25,10 @@ namespace DormitoryPAT.Models
         [Required]
         public string Password { get; set; }
 
+        public long? TelegramId { get; set; }
+
         // Навигационные свойства
-        public ICollection<RepairRequests> AssignedRepairRequests { get; set; }        
+        public ICollection<RepairRequests> AssignedRepairRequests { get; set; }
         [InverseProperty("Reviewer")]
         public ICollection<Complaints> ReviewedComplaints { get; set; }
 
@@ -35,6 +37,7 @@ namespace DormitoryPAT.Models
         {
             EmployeeRole.Мастер => "Мастер",
             EmployeeRole.Воспитатель => "Воспитатель",
+            EmployeeRole.Дежурный_воспитатель => "Дежурный воспитатель",
             EmployeeRole.Заведующий_общежитием => "Заведующий общежитием",
             EmployeeRole.Администратор => "Администратор",
             _ => EmployeeRole.ToString()
@@ -48,6 +51,9 @@ namespace DormitoryPAT.Models
 
         [Display(Name = "Воспитатель")]
         Воспитатель,
+
+        [Display(Name = "Дежурный_воспитатель")]
+        Дежурный_воспитатель,
 
         [Display(Name = "Заведующий_общежитием")]
         Заведующий_общежитием,

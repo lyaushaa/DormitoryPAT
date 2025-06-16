@@ -47,7 +47,6 @@ class Program
         using var cts = new CancellationTokenSource();
         _botClient.StartReceiving(UpdateHandler, ErrorHandler, _receiverOptions, cts.Token);
 
-        // Настройка таймера для уведомлений в 13:00
         _notificationTimer = new System.Timers.Timer(TimeSpan.FromHours(1).TotalMilliseconds);
         _notificationTimer.Elapsed += async (s, e) => await SendDutyNotifications();
         _notificationTimer.Start();
@@ -96,55 +95,176 @@ class Program
 
         if (!_userSessions.TryGetValue(chatId, out var session))
         {
-            Console.WriteLine($"[{DateTime.Now}] Создана новая сессия для чата {chatId}");
             session = new UserSession();
             _userSessions[chatId] = session;
         }
 
         if (message.Text == "/start")
         {
-            Console.WriteLine($"[{DateTime.Now}] Пользователь {chatId} начал процесс авторизации");
-            await StartAuthProcess(client, chatId);
+            if (session.Student != null)
+            {
+                await client.SendMessage(chatId, "Вы уже авторизованы. Используйте доступные команды.");
+                await UpdateMenuCommands(client, chatId);
+            }
+            else
+            {
+                await StartAuthProcess(client, chatId);
+            }
             return;
         }
 
+        // Если пользователь в процессе авторизации (ожидает номер)
         if (session.AuthState == AuthState.AwaitingPhone && message.Contact != null)
         {
-            Console.WriteLine($"[{DateTime.Now}] Пользователь {chatId} предоставил номер телефона");
             await ProcessPhoneNumber(client, message, session);
+            return;
+        }
+        else if (session.AuthState == AuthState.AwaitingPhone)
+        {
+            var requestButton = new KeyboardButton("Предоставить номер телефона") { RequestContact = true };
+            var keyboard = new ReplyKeyboardMarkup(requestButton) { ResizeKeyboard = true, OneTimeKeyboard = true };
+            await client.SendMessage(chatId, "Пожалуйста, нажмите кнопку 'Предоставить номер телефона' для авторизации:", replyMarkup: keyboard);
             return;
         }
 
         if (session.Student == null)
         {
-            Console.WriteLine($"[{DateTime.Now}] Пользователь {chatId} не авторизован");
             await client.SendMessage(chatId, "Пожалуйста, начните с команды /start");
             return;
         }
 
+        // Проверка активных процессов (заявка, жалоба, дежурство)
+        if (IsActiveProcess(session))
+        {
+            await HandleActiveProcess(client, message, session);
+            return;
+        }
+
+        await ProcessAuthorizedCommand(client, message, session);
+    }
+
+    private static bool IsActiveProcess(UserSession session)
+    {
+        return session.TempData.ContainsKey("repairState") ||
+               session.TempData.ContainsKey("complaintState") ||
+               session.TempData.ContainsKey("dutyState");
+    }
+
+    private static async Task HandleActiveProcess(ITelegramBotClient client, Message message, UserSession session)
+    {
+        var chatId = message.Chat.Id;
+
+        // Если пользователь пытается выполнить другую команду во время активного процесса
+        if (message.Text != null && message.Text.StartsWith("/"))
+        {
+            await client.SendMessage(chatId, "⚠ Пожалуйста, завершите текущее действие или отмените его перед выполнением других команд.");
+            await ContinueCurrentProcess(client, chatId, session);
+            return;
+        }
+
+        // Обработка текущего активного процесса
         if (session.TempData.ContainsKey("repairState"))
         {
-            Console.WriteLine($"[{DateTime.Now}] Пользователь {chatId} на этапе создания заявки: {session.TempData["repairState"]}");
             await HandleRepairRequestCreation(client, message, session);
-            return;
         }
-
-        if (session.TempData.ContainsKey("complaintState") && session.TempData["complaintState"].ToString() == "awaitingText")
+        else if (session.TempData.ContainsKey("complaintState"))
         {
-            Console.WriteLine($"[{DateTime.Now}] Пользователь {chatId} отправил текст жалобы");
-            await ProcessComplaintText(client, message, session);
-            return;
+            if (session.TempData["complaintState"].ToString() == "awaitingText")
+            {
+                await ProcessComplaintText(client, message, session);
+            }
         }
-
-        if (session.TempData.ContainsKey("dutyState"))
+        else if (session.TempData.ContainsKey("dutyState"))
         {
-            Console.WriteLine($"[{DateTime.Now}] Пользователь {chatId} на этапе создания/редактирования дежурства: {session.TempData["dutyState"]}");
             await HandleDutyProcess(client, message, session);
-            return;
         }
+    }
 
-        Console.WriteLine($"[{DateTime.Now}] Обработка команды от авторизованного пользователя {session.Student.StudentId}");
-        await ProcessAuthorizedCommand(client, message, session);
+    private static async Task ContinueCurrentProcess(ITelegramBotClient client, long chatId, UserSession session)
+    {
+        if (session.TempData.ContainsKey("repairState"))
+        {
+            var state = session.TempData["repairState"].ToString();
+            switch (state)
+            {
+                case "awaitingProblemType":
+                    await client.SendMessage(chatId, "Пожалуйста, выберите тип проблемы:");
+                    break;
+                case "awaitingLocation":
+                    await client.SendMessage(chatId, "Пожалуйста, укажите место, где требуется ремонт:");
+                    break;
+                case "awaitingComment":
+                    await client.SendMessage(chatId, "Пожалуйста, опишите проблему подробнее:");
+                    break;
+                case "awaitingConfirmation":
+                    var keyboard = new InlineKeyboardMarkup(new[]
+                    {
+                        new[] { InlineKeyboardButton.WithCallbackData("Отправить", "repair_submit"),
+                              InlineKeyboardButton.WithCallbackData("Отмена", "repair_cancel") }
+                    });
+                    await client.SendMessage(chatId, "Подтвердите отправку заявки:", replyMarkup: keyboard);
+                    break;
+            }
+        }
+        else if (session.TempData.ContainsKey("complaintState"))
+        {
+            var state = session.TempData["complaintState"].ToString();
+            switch (state)
+            {
+                case "awaitingType":
+                    var typeKeyboard = new InlineKeyboardMarkup(new[]
+                    {
+                        new[] { InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"),
+                              InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
+                    });
+                    await client.SendMessage(chatId, "Выберите, как отправить жалобу:", replyMarkup: typeKeyboard);
+                    break;
+                case "awaitingText":
+                    await client.SendMessage(chatId, "Пожалуйста, напишите текст вашей жалобы:");
+                    break;
+                case "awaitingConfirmation":
+                    var confirmKeyboard = new InlineKeyboardMarkup(new[]
+                    {
+                        new[] { InlineKeyboardButton.WithCallbackData("Отправить", "complaint_submit"),
+                              InlineKeyboardButton.WithCallbackData("Отмена", "complaint_cancel") }
+                    });
+                    await client.SendMessage(chatId, "Подтвердите отправку жалобы:", replyMarkup: confirmKeyboard);
+                    break;
+            }
+        }
+        else if (session.TempData.ContainsKey("dutyState"))
+        {
+            var state = session.TempData["dutyState"].ToString();
+            switch (state)
+            {
+                case "awaitingMonthCreate":
+                    await client.SendMessage(chatId, "Введите номер месяца (1-12):");
+                    break;
+                case "awaitingRoomCreate":
+                    var floor = (int)session.TempData["dutyFloor"];
+                    var day = (int)session.TempData["dutyDay"];
+                    var baseDate = (DateTime)session.TempData["dutyDate"];
+                    var date = baseDate.AddDays(day - 1);
+                    await client.SendMessage(chatId, $"Введите номер комнаты для {date:dd.MM.yyyy} (например, {floor}01-{floor}22):");
+                    break;
+                case "awaitingDateEdit":
+                    await client.SendMessage(chatId, "Введите дату для редактирования (формат: yyyy-MM-dd, например, 2025-06-06):");
+                    break;
+                case "awaitingRoomEdit":
+                    floor = (int)session.TempData["dutyFloor"];
+                    var dateToEdit = (DateTime)session.TempData["dutyEditDate"];
+                    await client.SendMessage(chatId, $"Введите номер комнаты для {dateToEdit:dd.MM.yyyy} (например, {floor}01-{floor}22):");
+                    break;
+                case "awaitingEditChoice":
+                    var choiceKeyboard = new InlineKeyboardMarkup(new[]
+                    {
+                        new[] { InlineKeyboardButton.WithCallbackData("Редактировать дальше", "duty_edit_continue"),
+                              InlineKeyboardButton.WithCallbackData("Сохранить и закончить", "duty_edit_save") }
+                    });
+                    await client.SendMessage(chatId, "Хотите редактировать дальше или сохранить изменения?", replyMarkup: choiceKeyboard);
+                    break;
+            }
+        }
     }
 
     #region Авторизация
@@ -153,11 +273,8 @@ class Program
         var requestButton = new KeyboardButton("Предоставить номер телефона") { RequestContact = true };
         var keyboard = new ReplyKeyboardMarkup(requestButton) { ResizeKeyboard = true, OneTimeKeyboard = true };
 
-        await client.SendMessage(
-            chatId: chatId,
-            text: "Для авторизации предоставьте номер телефона:",
-            replyMarkup: keyboard);
-
+        await client.SendMessage(chatId, "Для авторизации нажмите кнопку 'Предоставить номер телефона' ниже.",
+                              replyMarkup: keyboard);
         _userSessions[chatId].AuthState = AuthState.AwaitingPhone;
     }
 
@@ -165,19 +282,33 @@ class Program
     {
         try
         {
-            var phoneNumber = message.Contact.PhoneNumber;
-            var cleanPhone = phoneNumber.Replace("+", "").Replace(" ", "").Replace("-", "");
+            // Проверяем, что контакт принадлежит отправителю
+            if (message.Contact.UserId != message.From.Id)
+            {
+                await client.SendMessage(message.Chat.Id, "❌ Вы можете авторизоваться только своим номером телефона. Пожалуйста, нажмите кнопку 'Предоставить номер телефона'.");
+
+                var requestButton = new KeyboardButton("Предоставить номер телефона") { RequestContact = true };
+                var keyboard = new ReplyKeyboardMarkup(requestButton) { ResizeKeyboard = true, OneTimeKeyboard = true };
+                await client.SendMessage(message.Chat.Id, "Нажмите кнопку ниже, чтобы предоставить свой номер:", replyMarkup: keyboard);
+
+                session.AuthState = AuthState.AwaitingPhone; // Сохраняем состояние ожидания номера
+                return;
+            }
+
+            var phoneNumber = message.Contact.PhoneNumber.Replace("+", "").Replace(" ", "").Replace("-", "");
 
             using var db = new StudentsContext();
-            var student = await db.Students
-                .FirstOrDefaultAsync(s => s.PhoneNumber.Replace("+", "").Replace(" ", "").Replace("-", "") == cleanPhone);
+            var student = await db.Students.FirstOrDefaultAsync(s => s.PhoneNumber.Replace("+", "").Replace(" ", "").Replace("-", "") == phoneNumber);
 
             if (student == null || student.StudentId == 0)
             {
-                await client.SendMessage(
-                    chatId: message.Chat.Id,
-                    text: "❌ Студент не найден или данные некорректны. Обратитесь к администратору.",
-                    replyMarkup: new ReplyKeyboardRemove());
+                await client.SendMessage(message.Chat.Id, "❌ Студент не найден или данные некорректны. Обратитесь к администратору.", replyMarkup: new ReplyKeyboardRemove());
+
+                var requestButton = new KeyboardButton("Предоставить номер телефона") { RequestContact = true };
+                var keyboard = new ReplyKeyboardMarkup(requestButton) { ResizeKeyboard = true, OneTimeKeyboard = true };
+                await client.SendMessage(message.Chat.Id, "Попробуйте снова предоставить номер:", replyMarkup: keyboard);
+
+                session.AuthState = AuthState.AwaitingPhone; // Сохраняем состояние ожидания номера
                 return;
             }
 
@@ -188,25 +319,34 @@ class Program
             }
 
             session.Student = student;
+            session.AuthState = AuthState.None; // Сбрасываем состояние после успешной авторизации
             await CompleteAuth(client, message.Chat.Id, student);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[{DateTime.Now}] Ошибка обработки номера: {ex}");
-            await client.SendMessage(
-                chatId: message.Chat.Id,
-                text: "⚠ Ошибка обработки номера. Попробуйте снова.");
+            await client.SendMessage(message.Chat.Id, "⚠ Ошибка обработки номера. Попробуйте снова.");
+
+            var requestButton = new KeyboardButton("Предоставить номер телефона") { RequestContact = true };
+            var keyboard = new ReplyKeyboardMarkup(requestButton) { ResizeKeyboard = true, OneTimeKeyboard = true };
+            await client.SendMessage(message.Chat.Id, "Попробуйте снова предоставить номер:", replyMarkup: keyboard);
+
+            session.AuthState = AuthState.AwaitingPhone; // Сохраняем состояние ожидания номера
         }
     }
 
     private static async Task CompleteAuth(ITelegramBotClient client, long chatId, Students student)
     {
-        await client.SendMessage(
-            chatId: chatId,
-            text: $"✅ Вы успешно авторизованы как {student.StudentsRoleDisplay} {student.FIO}",
-            replyMarkup: new ReplyKeyboardRemove());
-
+        await client.SendMessage(chatId, $"✅ Вы успешно авторизованы как {student.StudentsRoleDisplay} {student.FIO}", replyMarkup: new ReplyKeyboardRemove());
         await UpdateMenuCommands(client, chatId);
+        var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+        { ResizeKeyboard = true };
+        await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
     }
     #endregion
 
@@ -237,14 +377,21 @@ class Program
         message.AppendLine("/phonebook - Телефонный справочник");
         message.AppendLine("/duty - График дежурств");
 
-        await client.SendMessage(chatId, message.ToString());
+        var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+        { ResizeKeyboard = true };
+        await client.SendMessage(chatId, message.ToString(), replyMarkup: menuKeyboard);
     }
     #endregion
 
     #region Обработка команд после авторизации
     private static async Task ProcessAuthorizedCommand(ITelegramBotClient client, Message message, UserSession session)
     {
-        var command = message.Text?.Split(' ')[0].ToLower();
+        var command = message.Text?.Trim().ToLower();
         session.CurrentCommand = command;
 
         switch (command)
@@ -254,26 +401,32 @@ class Program
                 break;
 
             case "/menu":
+            case "главное меню":
                 await ShowMainMenu(client, message.Chat.Id);
                 break;
 
             case "/repair":
+            case "заявка на ремонт":
                 await HandleRepairCommand(client, message, session);
                 break;
 
             case "/complaint":
+            case "жалоба":
                 await HandleComplaintCommand(client, message, session);
                 break;
 
             case "/phonebook":
+            case "телефонный справочник":
                 await HandlePhonebookCommand(client, message.Chat.Id);
                 break;
 
             case "/payment":
+            case "плата за общежитие":
                 await HandleDormPaymentCommand(client, message.Chat.Id);
                 break;
 
             case "/duty":
+            case "график дежурств":
                 await HandleDutyCommand(client, message, session);
                 break;
 
@@ -293,8 +446,6 @@ class Program
 
     private static async Task StartRepairRequestCreation(ITelegramBotClient client, long chatId)
     {
-        Console.WriteLine($"[{DateTime.Now}] Начало создания заявки на ремонт для {chatId}");
-
         var keyboard = new ReplyKeyboardMarkup(new[]
         {
             new KeyboardButton("Электрика"),
@@ -306,10 +457,7 @@ class Program
             OneTimeKeyboard = true
         };
 
-        await client.SendMessage(
-            chatId: chatId,
-            text: "Выберите тип проблемы:",
-            replyMarkup: keyboard);
+        await client.SendMessage(chatId, "Выберите тип проблемы:", replyMarkup: keyboard);
 
         if (!_userSessions.TryGetValue(chatId, out var session))
         {
@@ -318,61 +466,76 @@ class Program
         }
 
         session.TempData["repairState"] = "awaitingProblemType";
-        Console.WriteLine($"[{DateTime.Now}] Установлено состояние awaitingProblemType для {chatId}");
     }
 
     private static async Task HandleRepairRequestCreation(ITelegramBotClient client, Message message, UserSession session)
     {
         var chatId = message.Chat.Id;
-        Console.WriteLine($"[{DateTime.Now}] Обработка создания заявки, этап: {session.TempData["repairState"]}");
+
+        if (message.Type != MessageType.Text)
+        {
+            await client.SendMessage(chatId, "Пожалуйста, введите текст.");
+            await ContinueCurrentProcess(client, chatId, session);
+            return;
+        }
 
         if (session.TempData["repairState"].ToString() == "awaitingProblemType")
         {
             if (!Enum.TryParse<ProblemType>(message.Text, out var problemType) || !Enum.IsDefined(typeof(ProblemType), problemType))
             {
-                await client.SendMessage(
-                    chatId: chatId,
-                    text: "Пожалуйста, выберите тип проблемы из предложенных: Электрика, Сантехника, Мебель.");
+                await client.SendMessage(chatId, "Пожалуйста, выберите тип проблемы из предложенных: Электрика, Сантехника, Мебель.");
+                await ContinueCurrentProcess(client, chatId, session);
                 return;
             }
 
             session.TempData["problemType"] = problemType;
-            Console.WriteLine($"[{DateTime.Now}] Пользователь выбрал тип проблемы: {message.Text}");
-
-            await client.SendMessage(
-                chatId: chatId,
-                text: "Укажите место, где требуется ремонт (например, комната 312):",
-                replyMarkup: new ReplyKeyboardRemove());
-
+            await client.SendMessage(chatId, "Укажите место, где требуется ремонт (например, комната 312):", replyMarkup: new ReplyKeyboardRemove());
             session.TempData["repairState"] = "awaitingLocation";
         }
         else if (session.TempData["repairState"].ToString() == "awaitingLocation")
         {
-            if (string.IsNullOrWhiteSpace(message.Text) || message.Text.Length > 255)
+            if (string.IsNullOrWhiteSpace(message.Text) || message.Text.Length > 255 || ContainsMaliciousInput(message.Text))
             {
-                await client.SendMessage(
-                    chatId: chatId,
-                    text: "Место должно быть указано и не превышать 255 символов. Попробуйте снова.");
+                await client.SendMessage(chatId, "Место должно быть указано, не содержать вредоносных данных и не превышать 255 символов. Попробуйте снова.");
+                await ContinueCurrentProcess(client, chatId, session);
                 return;
             }
 
-            session.TempData["location"] = message.Text;
-            Console.WriteLine($"[{DateTime.Now}] Пользователь указал место: {message.Text}");
-
-            await client.SendMessage(
-                chatId: chatId,
-                text: "Опишите проблему подробнее:");
-
+            session.TempData["location"] = SanitizeInput(message.Text);
+            await client.SendMessage(chatId, "Опишите проблему подробнее:");
             session.TempData["repairState"] = "awaitingComment";
         }
         else if (session.TempData["repairState"].ToString() == "awaitingComment")
         {
-            var comment = message.Text ?? "Нет комментария";
+            if (string.IsNullOrWhiteSpace(message.Text) || message.Text.Length > 4096 || ContainsMaliciousInput(message.Text) || !IsTextOnly(message.Text))
+            {
+                await client.SendMessage(chatId, "Комментарий должен быть текстом, не содержать вредоносных данных и не превышать 4096 символов. Попробуйте снова.");
+                await ContinueCurrentProcess(client, chatId, session);
+                return;
+            }
+
+            session.TempData["comment"] = SanitizeInput(message.Text);
+            var keyboard = new InlineKeyboardMarkup(new[]
+            {
+                new[] { InlineKeyboardButton.WithCallbackData("Отправить", "repair_submit"),
+                      InlineKeyboardButton.WithCallbackData("Отмена", "repair_cancel") }
+            });
+            await client.SendMessage(chatId, "Подтвердите отправку заявки:", replyMarkup: keyboard);
+            session.TempData["repairState"] = "awaitingConfirmation";
+        }
+    }
+
+    private static async Task HandleRepairCallback(ITelegramBotClient client, CallbackQuery callbackQuery, UserSession session)
+    {
+        var chatId = callbackQuery.Message.Chat.Id;
+        var data = callbackQuery.Data;
+        var messageId = callbackQuery.Message.MessageId;
+
+        if (data == "repair_submit" && session.TempData["repairState"].ToString() == "awaitingConfirmation")
+        {
             var problemType = (ProblemType)session.TempData["problemType"];
             var location = session.TempData["location"].ToString();
-
-            Console.WriteLine($"[{DateTime.Now}] Создание заявки с параметрами: " +
-                             $"Тип: {problemType}, Место: {location}, Комментарий: {comment}");
+            var comment = session.TempData["comment"].ToString();
 
             using var db = new RepairRequestsContext();
             var request = new RepairRequests
@@ -390,18 +553,30 @@ class Program
             await db.SaveChangesAsync();
             Console.WriteLine($"[{DateTime.Now}] Заявка #{request.RequestId} сохранена в БД");
 
-            await client.SendMessage(
-                chatId: chatId,
-                text: $"✅ Заявка на ремонт создана!\n\n" +
-                     $"Тип: {problemType}\n" +
-                     $"Место: {location}\n" +
-                     $"Комментарий: {comment}\n\n" +
-                     $"Номер заявки: #{request.RequestId}");
-
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"✅ Заявка на ремонт создана!\n\nТип: {problemType}\nМесто: {location}\nКомментарий: {comment}\nНомер заявки: #{request.RequestId}", replyMarkup: null);
             session.TempData.Remove("repairState");
             session.TempData.Remove("problemType");
             session.TempData.Remove("location");
+            session.TempData.Remove("comment");
         }
+        else if (data == "repair_cancel")
+        {
+            session.TempData.Remove("repairState");
+            session.TempData.Remove("problemType");
+            session.TempData.Remove("location");
+            session.TempData.Remove("comment");
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "❌ Создание заявки отменено.", replyMarkup: null);
+        }
+
+        var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+        { ResizeKeyboard = true };
+        await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
+        await client.AnswerCallbackQuery(callbackQuery.Id);
     }
     #endregion
 
@@ -415,7 +590,8 @@ class Program
     {
         var keyboard = new InlineKeyboardMarkup(new[]
         {
-            new[] { InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"), InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
+            new[] { InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"),
+                  InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
         });
 
         await client.SendMessage(chatId, "Выберите, как отправить жалобу:", replyMarkup: keyboard);
@@ -428,10 +604,39 @@ class Program
         session.TempData["complaintState"] = "awaitingType";
     }
 
+    private static async Task ProcessComplaintText(ITelegramBotClient client, Message message, UserSession session)
+    {
+        var chatId = message.Chat.Id;
+
+        if (message.Type != MessageType.Text)
+        {
+            await client.SendMessage(chatId, "Пожалуйста, введите текст.");
+            await ContinueCurrentProcess(client, chatId, session);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(message.Text) || message.Text.Length > 4096 || ContainsMaliciousInput(message.Text) || !IsTextOnly(message.Text))
+        {
+            await client.SendMessage(chatId, "Текст жалобы должен быть текстом, не содержать вредоносных данных и не превышать 4096 символов. Попробуйте снова:");
+            await ContinueCurrentProcess(client, chatId, session);
+            return;
+        }
+
+        session.TempData["complaintText"] = SanitizeInput(message.Text);
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+            new[] { InlineKeyboardButton.WithCallbackData("Отправить", "complaint_submit"),
+                  InlineKeyboardButton.WithCallbackData("Отмена", "complaint_cancel") }
+        });
+        await client.SendMessage(chatId, "Подтвердите отправку жалобы:", replyMarkup: keyboard);
+        session.TempData["complaintState"] = "awaitingConfirmation";
+    }
+
     private static async Task HandleComplaintCallback(ITelegramBotClient client, CallbackQuery callbackQuery, UserSession session)
     {
         var chatId = callbackQuery.Message.Chat.Id;
         var data = callbackQuery.Data;
+        var messageId = callbackQuery.Message.MessageId;
 
         if (data == "complaint_anonymous" || data == "complaint_public")
         {
@@ -439,40 +644,59 @@ class Program
             session.TempData["complaintState"] = "awaitingText";
             session.TempData["isAnonymous"] = isAnonymous;
 
-            await client.EditMessageText(chatId: chatId, messageId: callbackQuery.Message.MessageId, text: "✍ Напишите текст вашей жалобы:", replyMarkup: null);
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "✍ Напишите текст вашей жалобы:", replyMarkup: null);
             await client.AnswerCallbackQuery(callbackQuery.Id);
         }
-    }
-
-    private static async Task ProcessComplaintText(ITelegramBotClient client, Message message, UserSession session)
-    {
-        var chatId = message.Chat.Id;
-        var complaintText = message.Text;
-        var isAnonymous = (bool)session.TempData["isAnonymous"];
-
-        if (string.IsNullOrWhiteSpace(complaintText))
+        else if (data == "complaint_submit" && session.TempData["complaintState"].ToString() == "awaitingConfirmation")
         {
-            await client.SendMessage(chatId, "Текст жалобы не может быть пустым. Попробуйте снова:");
-            return;
+            var complaintText = session.TempData["complaintText"].ToString();
+            var isAnonymous = (bool)session.TempData["isAnonymous"];
+
+            using var db = new ComplaintsContext();
+            var complaint = new Complaints
+            {
+                StudentId = isAnonymous ? null : (long?)session.Student.StudentId,
+                ComplaintText = complaintText,
+                Status = ComplaintStatus.Создана,
+                SubmissionDate = DateTime.Now,
+                LastStatusChange = DateTime.Now
+            };
+
+            await db.Complaints.AddAsync(complaint);
+            await db.SaveChangesAsync();
+
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"✅ Жалоба #{complaint.ComplaintId} успешно создана!\nТип: {(isAnonymous ? "Анонимно" : "Не анонимно")}", replyMarkup: null);
+            session.TempData.Remove("complaintState");
+            session.TempData.Remove("isAnonymous");
+            session.TempData.Remove("complaintText");
+
+            var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+            { ResizeKeyboard = true };
+            await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
-
-        using var db = new ComplaintsContext();
-        var complaint = new Complaints
+        else if (data == "complaint_cancel")
         {
-            StudentId = isAnonymous ? null : (long?)session.Student.StudentId,
-            ComplaintText = complaintText,
-            Status = ComplaintStatus.Создана,
-            SubmissionDate = DateTime.Now,
-            LastStatusChange = DateTime.Now
-        };
+            session.TempData.Remove("complaintState");
+            session.TempData.Remove("isAnonymous");
+            session.TempData.Remove("complaintText");
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "❌ Создание жалобы отменено.", replyMarkup: null);
 
-        await db.Complaints.AddAsync(complaint);
-        await db.SaveChangesAsync();
-
-        session.TempData.Remove("complaintState");
-        session.TempData.Remove("isAnonymous");
-
-        await client.SendMessage(chatId, $"✅ Жалоба #{complaint.ComplaintId} успешно создана!\nТип: {(isAnonymous ? "Анонимно" : "Не анонимно")}");
+            var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+            { ResizeKeyboard = true };
+            await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
+        }
+        
+        await client.AnswerCallbackQuery(callbackQuery.Id);
     }
     #endregion
 
@@ -487,7 +711,14 @@ class Program
         message.AppendLine("8 (342) 206-03-40 (доб. 324) - дежурный по общежитию (2,3,4 этажи; вечернее и ночное время), каб. 324\n");
         message.AppendLine("8 (342) 206-03-40 (доб. 624) - дежурный по общежитию (5,6,7 этажи; вечернее и ночное время), каб. 624");
 
-        await client.SendMessage(chatId, message.ToString());
+        var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+        { ResizeKeyboard = true };
+        await client.SendMessage(chatId, message.ToString(), replyMarkup: menuKeyboard);
     }
     #endregion
 
@@ -496,7 +727,14 @@ class Program
     {
         var image = GeneratePaymentTableImage();
         await using var stream = new MemoryStream(image);
-        await client.SendPhoto(chatId, InputFile.FromStream(stream, "payment_table.png"), caption: "💰 Плата за общежитие");
+        var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+        { ResizeKeyboard = true };
+        await client.SendPhoto(chatId, InputFile.FromStream(stream, "payment_table.png"), caption: "💰 Плата за общежитие", replyMarkup: menuKeyboard);
     }
 
     private static byte[] GeneratePaymentTableImage()
@@ -553,7 +791,7 @@ class Program
         return ms.ToArray();
     }
     #endregion
-        
+
     #region Модуль дежурств на кухне
     private static async Task HandleDutyCommand(ITelegramBotClient client, Message message, UserSession session)
     {
@@ -569,11 +807,12 @@ class Program
             session.TempData["dutyFloor"] = session.Student.Floor;
             var keyboard = new InlineKeyboardMarkup(new[]
             {
-            new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"), InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
-        });
+                new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"),
+                      InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
+            });
             await client.SendMessage(chatId, "Выберите действие:", replyMarkup: keyboard);
         }
-        else if (role == StudentRole.Председатель_общежития)
+        else if (role == StudentRole.Председатель_Студенческого_совета_общежития)
         {
             var keyboard = new InlineKeyboardMarkup(Enumerable.Range(2, 6).Select(f => new[] { InlineKeyboardButton.WithCallbackData($"Этаж {f}", $"duty_floor_{f}") }).ToArray());
             await client.SendMessage(chatId, "Выберите этаж:", replyMarkup: keyboard);
@@ -582,7 +821,7 @@ class Program
 
     private static async Task ShowDutyScheduleForStudent(ITelegramBotClient client, long chatId, int floor)
     {
-        var now = DateTime.UtcNow; // 01:22 AM CEST = 11:22 PM UTC (05.06.2025)
+        var now = DateTime.UtcNow;
         var currentMonth = new DateTime(now.Year, now.Month, 1);
         var nextMonth = currentMonth.AddMonths(1);
 
@@ -597,6 +836,15 @@ class Program
             await using var nextStream = new MemoryStream(nextSchedule);
             await client.SendPhoto(chatId, InputFile.FromStream(nextStream, $"duty_{nextMonth:yyyy-MM}.png"), caption: $"График дежурств на кухне - {nextMonth:MMMM yyyy}");
         }
+
+        var menuKeyboard = new ReplyKeyboardMarkup(new[]
+        {
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
+        { ResizeKeyboard = true };
+        await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
     }
 
     private static async Task HandleDutyProcess(ITelegramBotClient client, Message message, UserSession session)
@@ -607,11 +855,19 @@ class Program
         var expectedRoomStart = floor * 100 + 1;
         var expectedRoomEnd = floor * 100 + 22;
 
+        if (message.Type != MessageType.Text)
+        {
+            await client.SendMessage(chatId, "Пожалуйста, введите текст.");
+            await ContinueCurrentProcess(client, chatId, session);
+            return;
+        }
+
         if (state == "awaitingMonthCreate")
         {
             if (!int.TryParse(message.Text, out var month) || month < 1 || month > 12)
             {
                 await client.SendMessage(chatId, "Введите корректный номер месяца (1-12):");
+                await ContinueCurrentProcess(client, chatId, session);
                 return;
             }
             var year = DateTime.UtcNow.Year;
@@ -623,6 +879,7 @@ class Program
             if (!int.TryParse(message.Text, out var room) || room < expectedRoomStart || room > expectedRoomEnd)
             {
                 await client.SendMessage(chatId, $"Введите корректный номер комнаты для этажа {floor} ({expectedRoomStart}-{expectedRoomEnd}):");
+                await ContinueCurrentProcess(client, chatId, session);
                 return;
             }
             var day = (int)session.TempData["dutyDay"];
@@ -639,7 +896,6 @@ class Program
                 await db.DutySchedule.AddAsync(new DutySchedule { Floor = floor, Date = date, Room = room });
             }
             await db.SaveChangesAsync();
-            Console.WriteLine($"[{DateTime.Now}] Сохранено в БД: Этаж {floor}, Дата {date:yyyy-MM-dd}, Комната {room}");
             session.TempData["dutyDay"] = day + 1;
             await NextDutyDay(client, chatId, session);
         }
@@ -648,17 +904,19 @@ class Program
             if (!DateTime.TryParseExact(message.Text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
             {
                 await client.SendMessage(chatId, "Введите дату в формате yyyy-MM-dd (например, 2025-06-06):");
+                await ContinueCurrentProcess(client, chatId, session);
                 return;
             }
             session.TempData["dutyEditDate"] = date;
             session.TempData["dutyState"] = "awaitingRoomEdit";
-            await client.SendMessage(chatId, $"Введите номер комнаты для {date:dd.MM.yyyy} (например, {expectedRoomStart}-{expectedRoomEnd}):");
+            await client.SendMessage(chatId, $"Введите номер комнаты для {date:dd.MM.yyyy} (например, {expectedRoomStart}-{expectedRoomEnd}:");
         }
         else if (state == "awaitingRoomEdit")
         {
             if (!int.TryParse(message.Text, out var room) || room < expectedRoomStart || room > expectedRoomEnd)
             {
                 await client.SendMessage(chatId, $"Введите корректный номер комнаты для этажа {floor} ({expectedRoomStart}-{expectedRoomEnd}):");
+                await ContinueCurrentProcess(client, chatId, session);
                 return;
             }
             var date = (DateTime)session.TempData["dutyEditDate"];
@@ -673,11 +931,11 @@ class Program
                 await db.DutySchedule.AddAsync(new DutySchedule { Floor = floor, Date = date, Room = room });
             }
             await db.SaveChangesAsync();
-            Console.WriteLine($"[{DateTime.Now}] Обновлено в БД: Этаж {floor}, Дата {date:yyyy-MM-dd}, Комната {room}");
             var keyboard = new InlineKeyboardMarkup(new[]
             {
-            new[] { InlineKeyboardButton.WithCallbackData("Редактировать дальше", "duty_edit_continue"), InlineKeyboardButton.WithCallbackData("Сохранить и закончить", "duty_edit_save") }
-        });
+                new[] { InlineKeyboardButton.WithCallbackData("Редактировать дальше", "duty_edit_continue"),
+                      InlineKeyboardButton.WithCallbackData("Сохранить и закончить", "duty_edit_save") }
+            });
             await client.SendMessage(chatId, $"Комната для {date:dd.MM.yyyy} обновлена на {room}. Хотите редактировать дальше или сохранить изменения?", replyMarkup: keyboard);
             session.TempData["dutyState"] = "awaitingEditChoice";
         }
@@ -687,6 +945,7 @@ class Program
     {
         var chatId = callbackQuery.Message.Chat.Id;
         var data = callbackQuery.Data;
+        var messageId = callbackQuery.Message.MessageId;
         var floor = session.TempData.ContainsKey("dutyFloor") ? (int)session.TempData["dutyFloor"] : session.Student.Floor;
 
         if (data.StartsWith("duty_floor_"))
@@ -695,9 +954,10 @@ class Program
             session.TempData["dutyFloor"] = floor;
             var keyboard = new InlineKeyboardMarkup(new[]
             {
-            new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"), InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
-        });
-            await client.EditMessageText(chatId: chatId, messageId: callbackQuery.Message.MessageId, text: $"Выбран этаж {floor}. Выберите действие:", replyMarkup: keyboard);
+                new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"),
+                      InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
+            });
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"Выбран этаж {floor}. Выберите действие:", replyMarkup: keyboard);
             await client.AnswerCallbackQuery(callbackQuery.Id);
         }
         else if (data == "duty_view")
@@ -705,17 +965,18 @@ class Program
             session.TempData["dutyFloor"] = floor;
             var keyboard = new InlineKeyboardMarkup(new[]
             {
-            new[] { InlineKeyboardButton.WithCallbackData("Прошлый месяц", "duty_view_prev"), InlineKeyboardButton.WithCallbackData("Текущий месяц", "duty_view_current") },
-            new[] { InlineKeyboardButton.WithCallbackData("Следующий месяц", "duty_view_next") }
-        });
-            await client.EditMessageText(chatId: chatId, messageId: callbackQuery.Message.MessageId, text: "Выберите месяц:", replyMarkup: keyboard);
+                new[] { InlineKeyboardButton.WithCallbackData("Прошлый месяц", "duty_view_prev"),
+                      InlineKeyboardButton.WithCallbackData("Текущий месяц", "duty_view_current") },
+                new[] { InlineKeyboardButton.WithCallbackData("Следующий месяц", "duty_view_next") }
+            });
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "Выберите месяц:", replyMarkup: keyboard);
             await client.AnswerCallbackQuery(callbackQuery.Id);
         }
         else if (data == "duty_create")
         {
             if (!session.TempData.ContainsKey("dutyFloor"))
             {
-                await client.EditMessageText(chatId: chatId, messageId: callbackQuery.Message.MessageId, text: "Сначала выберите этаж.", replyMarkup: null);
+                await client.EditMessageText(chatId: chatId, messageId: messageId, text: "Сначала выберите этаж.", replyMarkup: null);
                 return;
             }
             var now = DateTime.UtcNow;
@@ -726,7 +987,7 @@ class Program
             {
                 if (db.DutySchedule.Any(ds => ds.Floor == floor && ds.Date.Month == next.Month && ds.Date.Year == next.Year))
                 {
-                    await client.EditMessageText(chatId: chatId, messageId: callbackQuery.Message.MessageId, text: "Графики на текущий и следующий месяцы уже существуют. Вы можете отредактировать их.", replyMarkup: null);
+                    await client.EditMessageText(chatId: chatId, messageId: messageId, text: "Графики на текущий и следующий месяцы уже существуют. Вы можете отредактировать их.", replyMarkup: null);
                 }
                 else
                 {
@@ -743,7 +1004,7 @@ class Program
         {
             if (!session.TempData.ContainsKey("dutyFloor"))
             {
-                await client.EditMessageText(chatId: chatId, messageId: callbackQuery.Message.MessageId, text: "Сначала выберите этаж.", replyMarkup: null);
+                await client.EditMessageText(chatId: chatId, messageId: messageId, text: "Сначала выберите этаж.", replyMarkup: null);
                 return;
             }
             var now = DateTime.UtcNow;
@@ -761,9 +1022,10 @@ class Program
             session.TempData["dutyMonth"] = selectedMonth;
             var keyboard = new InlineKeyboardMarkup(new[]
             {
-            new[] { InlineKeyboardButton.WithCallbackData("Полное редактирование", "duty_edit_full"), InlineKeyboardButton.WithCallbackData("Частичное редактирование", "duty_edit_partial") },
-            new[] { InlineKeyboardButton.WithCallbackData("Отмена", "duty_cancel") }
-        });
+                new[] { InlineKeyboardButton.WithCallbackData("Полное редактирование", "duty_edit_full"),
+                      InlineKeyboardButton.WithCallbackData("Частичное редактирование", "duty_edit_partial") },
+                new[] { InlineKeyboardButton.WithCallbackData("Отмена", "duty_cancel") }
+            });
             await client.SendMessage(chatId, "Выберите тип редактирования или отмените действие:", replyMarkup: keyboard);
             await client.AnswerCallbackQuery(callbackQuery.Id);
         }
@@ -794,17 +1056,48 @@ class Program
         }
         else if (data == "duty_edit_save")
         {
+            var month = (DateTime)session.TempData["dutyMonth"];
             session.TempData.Remove("dutyEditDate");
             session.TempData.Remove("dutyState");
             session.TempData.Remove("dutyMonth");
-            await ShowDutyOptions(client, chatId, session);
+            var image = GenerateDutyImage(month, floor);
+            await using var stream = new MemoryStream(image);
+            await client.SendPhoto(chatId, InputFile.FromStream(stream, $"duty_{month:yyyy-MM}.png"), caption: $"График дежурств на кухне - {month:MMMM yyyy}", replyMarkup: null);
+
+            // Notify students about the edited schedule
+            using var studentsDb = new StudentsContext();
+            var students = await studentsDb.Students
+                .Where(s => s.Floor == floor && s.TelegramId != null)
+                .ToListAsync();
+            foreach (var student in students)
+            {
+                await client.SendMessage(student.TelegramId.Value, $"🔔 График дежурств на кухне для этажа {floor} на {month:MMMM yyyy} был изменён!");
+            }
+
+            var menuKeyboard = new ReplyKeyboardMarkup(new[]
+            {
+                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+                new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+            })
+            { ResizeKeyboard = true };
+            await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
         else if (data == "duty_cancel")
         {
             session.TempData.Remove("dutyState");
             session.TempData.Remove("dutyMonth");
-            await ShowDutyOptions(client, chatId, session);
+            var menuKeyboard = new ReplyKeyboardMarkup(new[]
+            {
+                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+                new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+            })
+            { ResizeKeyboard = true };
+            await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
+
+        await client.AnswerCallbackQuery(callbackQuery.Id);
     }
 
     private static async Task CreateDutySchedule(ITelegramBotClient client, long chatId, UserSession session, DateTime month, bool isEdit = false)
@@ -839,7 +1132,25 @@ class Program
             var image = GenerateDutyImage(baseDate, floor);
             await using var stream = new MemoryStream(image);
             await client.SendPhoto(chatId, InputFile.FromStream(stream, $"duty_{baseDate:yyyy-MM}.png"), caption: $"График дежурств на кухне - {baseDate:MMMM yyyy}");
-            await ShowDutyOptions(client, chatId, session);
+
+            // Notify students about the new schedule
+            using var studentsDb = new StudentsContext();
+            var students = await studentsDb.Students
+                .Where(s => s.Floor == floor && s.TelegramId != null)
+                .ToListAsync();
+            foreach (var student in students)
+            {
+                await client.SendMessage(student.TelegramId.Value, $"🔔 Новый график дежурств на кухне для этажа {floor} на {baseDate:MMMM yyyy} создан!");
+            }
+
+            var menuKeyboard = new ReplyKeyboardMarkup(new[]
+            {
+                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+                new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+            })
+            { ResizeKeyboard = true };
+            await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
             return;
         }
 
@@ -852,8 +1163,9 @@ class Program
     {
         var keyboard = new InlineKeyboardMarkup(new[]
         {
-        new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"), InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
-    });
+            new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"),
+                  InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
+        });
         await client.SendMessage(chatId, "Выберите действие:", replyMarkup: keyboard);
     }
 
@@ -937,6 +1249,10 @@ class Program
         {
             await HandleComplaintCallback(client, callbackQuery, session);
         }
+        else if (callbackQuery.Data.StartsWith("repair_"))
+        {
+            await HandleRepairCallback(client, callbackQuery, session);
+        }
         else if (callbackQuery.Data.StartsWith("duty_"))
         {
             await HandleDutyCallback(client, callbackQuery, session);
@@ -950,5 +1266,25 @@ class Program
     {
         Console.WriteLine($"[{DateTime.Now}] ⚠ ОШИБКА: {error}");
         return Task.CompletedTask;
+    }
+
+    // Вспомогательные методы для валидации
+    private static bool ContainsMaliciousInput(string input)
+    {
+        // Простая проверка на потенциально вредоносные символы или SQL-инъекции
+        string[] maliciousPatterns = { "SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "<script", "alert(", "--", "/*", "*/", "exec" };
+        return maliciousPatterns.Any(pattern => input.ToUpper().Contains(pattern));
+    }
+
+    private static bool IsTextOnly(string input)
+    {
+        // Проверка, что строка содержит только текст (без специальных символов, указывающих на код или медиа)
+        return !input.Any(ch => char.IsControl(ch) || char.IsSymbol(ch) || input.Contains("http") || input.Contains("www"));
+    }
+
+    private static string SanitizeInput(string input)
+    {
+        // Удаление потенциально опасных символов
+        return input.Replace("'", "''").Replace("--", "").Replace("/*", "").Replace("*/", "").Trim();
     }
 }

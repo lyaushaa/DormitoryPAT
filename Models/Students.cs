@@ -16,6 +16,9 @@ namespace DormitoryPAT.Models
         public string FIO { get; set; }
 
         [Required]
+        public string Group { get; set; }
+
+        [Required]
         public int Floor { get; set; }
 
         [Required]
@@ -25,10 +28,13 @@ namespace DormitoryPAT.Models
         public DateTime DateOfBirth { get; set; }
 
         [Required]
-        [Column(TypeName = "ENUM('Студент', 'Староста_этажа', 'Председатель_общежития')")]
+        [Column(TypeName = "ENUM('Студент', 'Староста_этажа', 'Председатель_Студенческого_совета_общежития')")]
         public StudentRole StudentRole { get; set; }
 
-        [ForeignKey("TelegramAuth")]
+        public DateTime? CheckInDate { get; set; }
+
+        public DateTime? CheckOutDate { get; set; }
+
         public long? TelegramId { get; set; }
 
         [NotMapped]
@@ -36,7 +42,7 @@ namespace DormitoryPAT.Models
         {
             StudentRole.Студент => "Студент",
             StudentRole.Староста_этажа => "Староста этажа",
-            StudentRole.Председатель_общежития => "Председатель общежития",            
+            StudentRole.Председатель_Студенческого_совета_общежития => "Председатель Студенческого совета общежития",
             _ => StudentRole.ToString()
         };
     }
@@ -49,7 +55,7 @@ namespace DormitoryPAT.Models
         [Display(Name = "Староста_этажа")]
         Староста_этажа,
 
-        [Display(Name = "Председатель_общежития")]
-        Председатель_общежития
+        [Display(Name = "Председатель_Студенческого_совета_общежития")]
+        Председатель_Студенческого_совета_общежития
     }
 }
