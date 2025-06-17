@@ -12,6 +12,7 @@ namespace DormitoryPAT.Context
     public class DutyScheduleContext : DbContext
     {
         public DbSet<DutySchedule> DutySchedule { get; set; }
+        public DbSet<RoomCleanlinessLinks> RoomCleanlinessLinks { get; set; }
         public DutyScheduleContext()
         {
             Database.EnsureCreated();

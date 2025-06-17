@@ -217,10 +217,10 @@ class Program
                         new[] { InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"),
                               InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
                     });
-                    await client.SendMessage(chatId, "Выберите, как отправить жалобу:", replyMarkup: typeKeyboard);
+                    await client.SendMessage(chatId, "Выберите, как отправить пожелание или жалобу:", replyMarkup: typeKeyboard);
                     break;
                 case "awaitingText":
-                    await client.SendMessage(chatId, "Пожалуйста, напишите текст вашей жалобы:");
+                    await client.SendMessage(chatId, "Пожалуйста, напишите текст вашего пожелания или жалобы:");
                     break;
                 case "awaitingConfirmation":
                     var confirmKeyboard = new InlineKeyboardMarkup(new[]
@@ -228,7 +228,7 @@ class Program
                         new[] { InlineKeyboardButton.WithCallbackData("Отправить", "complaint_submit"),
                               InlineKeyboardButton.WithCallbackData("Отмена", "complaint_cancel") }
                     });
-                    await client.SendMessage(chatId, "Подтвердите отправку жалобы:", replyMarkup: confirmKeyboard);
+                    await client.SendMessage(chatId, "Подтвердите отправку:", replyMarkup: confirmKeyboard);
                     break;
             }
         }
@@ -262,6 +262,10 @@ class Program
                               InlineKeyboardButton.WithCallbackData("Сохранить и закончить", "duty_edit_save") }
                     });
                     await client.SendMessage(chatId, "Хотите редактировать дальше или сохранить изменения?", replyMarkup: choiceKeyboard);
+                    break;
+                case "awaitingLinkUpdate":
+                    floor = (int)session.TempData["dutyFloor"];
+                    await client.SendMessage(chatId, $"Введите новую ссылку для оценки чистоты комнат на этаже {floor}:");
                     break;
             }
         }
@@ -342,7 +346,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -357,7 +361,7 @@ class Program
         {
             new BotCommand { Command = "menu", Description = "Главное меню" },
             new BotCommand { Command = "repair", Description = "Заявка на ремонт" },
-            new BotCommand { Command = "complaint", Description = "Жалоба" },
+            new BotCommand { Command = "complaint", Description = "Пожелания и жалобы" },
             new BotCommand { Command = "payment", Description = "Плата за общежитие" },
             new BotCommand { Command = "phonebook", Description = "Телефонный справочник" },
             new BotCommand { Command = "duty", Description = "График дежурств" }
@@ -372,7 +376,7 @@ class Program
         var message = new StringBuilder("Главное меню:\nдоступные команды:\n");
         message.AppendLine("/menu - Главное меню");
         message.AppendLine("/repair - Заявка на ремонт");
-        message.AppendLine("/complaint - Жалоба");
+        message.AppendLine("/complaint - Пожелания и жалобы");
         message.AppendLine("/payment - Плата за общежитие");
         message.AppendLine("/phonebook - Телефонный справочник");
         message.AppendLine("/duty - График дежурств");
@@ -380,7 +384,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -411,7 +415,7 @@ class Program
                 break;
 
             case "/complaint":
-            case "жалоба":
+            case "пожелания и жалобы":
                 await HandleComplaintCommand(client, message, session);
                 break;
 
@@ -571,7 +575,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -594,7 +598,7 @@ class Program
                   InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
         });
 
-        await client.SendMessage(chatId, "Выберите, как отправить жалобу:", replyMarkup: keyboard);
+        await client.SendMessage(chatId, "Выберите, как отправить пожелание или жалобу:", replyMarkup: keyboard);
 
         if (!_userSessions.TryGetValue(chatId, out var session))
         {
@@ -617,7 +621,7 @@ class Program
 
         if (string.IsNullOrWhiteSpace(message.Text) || message.Text.Length > 4096 || ContainsMaliciousInput(message.Text) || !IsTextOnly(message.Text))
         {
-            await client.SendMessage(chatId, "Текст жалобы должен быть текстом, не содержать вредоносных данных и не превышать 4096 символов. Попробуйте снова:");
+            await client.SendMessage(chatId, "Текст пожелания или жалобы должен быть текстом, не содержать вредоносных данных и не превышать 4096 символов. Попробуйте снова:");
             await ContinueCurrentProcess(client, chatId, session);
             return;
         }
@@ -628,7 +632,7 @@ class Program
             new[] { InlineKeyboardButton.WithCallbackData("Отправить", "complaint_submit"),
                   InlineKeyboardButton.WithCallbackData("Отмена", "complaint_cancel") }
         });
-        await client.SendMessage(chatId, "Подтвердите отправку жалобы:", replyMarkup: keyboard);
+        await client.SendMessage(chatId, "Подтвердите отправку:", replyMarkup: keyboard);
         session.TempData["complaintState"] = "awaitingConfirmation";
     }
 
@@ -644,7 +648,7 @@ class Program
             session.TempData["complaintState"] = "awaitingText";
             session.TempData["isAnonymous"] = isAnonymous;
 
-            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "✍ Напишите текст вашей жалобы:", replyMarkup: null);
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "✍ Напишите текст вашего пожелания или жалобы:", replyMarkup: null);
             await client.AnswerCallbackQuery(callbackQuery.Id);
         }
         else if (data == "complaint_submit" && session.TempData["complaintState"].ToString() == "awaitingConfirmation")
@@ -665,17 +669,17 @@ class Program
             await db.Complaints.AddAsync(complaint);
             await db.SaveChangesAsync();
 
-            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"✅ Жалоба #{complaint.ComplaintId} успешно создана!\nТип: {(isAnonymous ? "Анонимно" : "Не анонимно")}", replyMarkup: null);
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"✅ Пожелания и жалобы #{complaint.ComplaintId} успешно создана!\nТип: {(isAnonymous ? "Анонимно" : "Не анонимно")}", replyMarkup: null);
             session.TempData.Remove("complaintState");
             session.TempData.Remove("isAnonymous");
             session.TempData.Remove("complaintText");
 
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
-        {
-            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
-            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
-        })
+            {
+                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+            })
             { ResizeKeyboard = true };
             await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
@@ -684,18 +688,18 @@ class Program
             session.TempData.Remove("complaintState");
             session.TempData.Remove("isAnonymous");
             session.TempData.Remove("complaintText");
-            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "❌ Создание жалобы отменено.", replyMarkup: null);
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "❌ Создание пожелания или жалобы отменено.", replyMarkup: null);
 
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
-        {
-            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
-            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
-        })
+            {
+                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+            })
             { ResizeKeyboard = true };
             await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
-        
+
         await client.AnswerCallbackQuery(callbackQuery.Id);
     }
     #endregion
@@ -706,15 +710,15 @@ class Program
         var message = new StringBuilder("📞 Телефоны:\n\n");
         message.AppendLine("8 (342) 206-02-54 - пост охраны\n");
         message.AppendLine("8 (342) 206-03-40 (доб. 904) - и.о. заведующего общежитием Козлов Иван Валерьевич\n");
-        message.AppendLine("8 (342) 206-03-40 (доб. 424) - воспитатель Габдулова Ильсина Наилевна (2,3,4 этажи; дневное время), каб. 424\n");
-        message.AppendLine("8 (342) 206-03-40 (доб. 524) - воспитатель Микова Елена Александровна (5,6,7 этажи; дневное время), каб. 524\n");
-        message.AppendLine("8 (342) 206-03-40 (доб. 324) - дежурный по общежитию (2,3,4 этажи; вечернее и ночное время), каб. 324\n");
-        message.AppendLine("8 (342) 206-03-40 (доб. 624) - дежурный по общежитию (5,6,7 этажи; вечернее и ночное время), каб. 624");
+        message.AppendLine("8 (342) 206-03-40 (доб. 424) - воспитатель Габдулова Ильсина Наилевна (2,3,4 этажи; дневное время), каб. 424\nЧасы работы:\nПн, Пт 11:30-19:30\nВт-Чт 12:00-19:30\nСб, Вс Выходной\n");
+        message.AppendLine("8 (342) 206-03-40 (доб. 524) - воспитатель Микова Елена Александровна (5,6,7 этажи; дневное время), каб. 524\nЧасы работы:\nПн-Ср 10:00-17:30\nЧт, Пт 10:00-18:00\nСб, Вс Выходной\n");
+        message.AppendLine("8 (342) 206-03-40 (доб. 324) - дежурный по общежитию (2,3,4 этажи; вечернее и ночное время), каб. 324\nЧасы работы:\nЕжедневно 20:00-9:00\n");
+        message.AppendLine("8 (342) 206-03-40 (доб. 624) - дежурный по общежитию (5,6,7 этажи; вечернее и ночное время), каб. 624\nЧасы работы:\nЕжедневно 20:00-9:00");
 
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -727,14 +731,49 @@ class Program
     {
         var image = GeneratePaymentTableImage();
         await using var stream = new MemoryStream(image);
+
+        // Get the base directory of the executing assembly and adjust to project root
+        var assemblyLocation = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        var projectRoot = Directory.GetParent(assemblyLocation)?.Parent?.Parent?.FullName; // Navigate up to project root
+        var qrPath = Path.Combine(projectRoot, "Images", "QR-Code.png");
+
+        // Check if the file exists and handle the case where it doesn't
+        if (!File.Exists(qrPath))
+        {
+            await client.SendMessage(chatId, $"⚠ Ошибка: Файл QR-Code.png не найден по пути {qrPath}. Убедитесь, что он находится в DormitoryPat\\Images.");
+            return;
+        }
+
+        // Load QR code image
+        await using var qrStream = new FileStream(qrPath, FileMode.Open, FileAccess.Read);
+
+        var caption = "💰 Плата за общежитие\n\n" +
+                      "Актуальную информацию по оплате смотрите на сайте Авиатехникума.\n\n" +                      
+                      "Реквизиты:\n" +
+                      "Наименование получателя платежа: КГАПОУ «Авиатехникум»\n" +
+                      "ИНН: 5902290441\n" +
+                      "КПП: 590201001\n" +
+                      "Код ОКТМО: 57701000\n" +
+                      "ОКПО: 12058200\n" +
+                      "Казначейский счет: 03224643570000005600\n" +
+                      "БИК банка: 015773997\n" +
+                      "Наименование банка: Отделение Пермь банка России /УФК по Пермскому краю г. Пермь\n" +
+                      "Наименование платежа: Оплата за проживание в общежитии за … (ФИО полностью)\n" +
+                      "КБК: 00000000000000000131";
+
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
-            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
-            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
-        })
+        new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+        new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+        new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+    })
         { ResizeKeyboard = true };
-        await client.SendPhoto(chatId, InputFile.FromStream(stream, "payment_table.png"), caption: "💰 Плата за общежитие", replyMarkup: menuKeyboard);
+
+        // Send payment table image
+        await client.SendPhoto(chatId, InputFile.FromStream(stream, "payment_table.png"), caption: caption, replyMarkup: menuKeyboard);
+
+        // Send QR code image
+        await client.SendPhoto(chatId, InputFile.FromStream(qrStream, "QR-Code.png"), caption: "QR-код для оплаты\nТОЛЬКО ДЛЯ СБЕРБАНКА!!!", replyMarkup: menuKeyboard);
     }
 
     private static byte[] GeneratePaymentTableImage()
@@ -742,13 +781,13 @@ class Program
         var headers = new[] { "Категория студентов", "Плата за наём, руб.", "Плата за коммун. услуги, руб.", "ИТОГО в месяц, руб." };
         var rows = new[]
         {
-            new[] { "Без категории", "9,60", "1137,92", "1147,52" },
-            new[] { "Дети-сироты и оставшиеся без попечения", "-", "-", "Бесплатно" },
-            new[] { "Потерявшие обоих родителей", "-", "-", "Бесплатно" },
-            new[] { "Участники СВО и их дети", "-", "-", "Бесплатно" },
-            new[] { "Инвалиды", "-", "568,96", "568,96" },
-            new[] { "Получатели соц. помощи", "-", "796,54", "796,54" }
-        };
+        new[] { "Без категории", "9,60", "1137,92", "1147,52" },
+        new[] { "Дети-сироты и оставшиеся без попечения", "-", "-", "Бесплатно" },
+        new[] { "Потерявшие обоих родителей", "-", "-", "Бесплатно" },
+        new[] { "Участники СВО и их дети", "-", "-", "Бесплатно" },
+        new[] { "Инвалиды", "-", "568,96", "568,96" },
+        new[] { "Получатели соц. помощи", "-", "796,54", "796,54" }
+    };
 
         int cellPadding = 15, rowHeight = 40, headerHeight = 65, imageWidth = 1100;
         int[] columnWidths = { 450, 200, 250, 200 };
@@ -783,9 +822,6 @@ class Program
             y += rowHeight;
         }
 
-        var footerFont = new System.Drawing.Font("Arial", 10, FontStyle.Italic);
-        graphics.DrawString("Актуально на " + DateTime.Now.ToString("dd.MM.yyyy"), footerFont, Brushes.Gray, 20, imageHeight - 30);
-
         using var ms = new MemoryStream();
         bitmap.Save(ms, ImageFormat.Png);
         return ms.ToArray();
@@ -808,7 +844,8 @@ class Program
             var keyboard = new InlineKeyboardMarkup(new[]
             {
                 new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"),
-                      InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
+                      InlineKeyboardButton.WithCallbackData("Создать", "duty_create"),
+                      InlineKeyboardButton.WithCallbackData("Изменить ссылку", "duty_update_link") }
             });
             await client.SendMessage(chatId, "Выберите действие:", replyMarkup: keyboard);
         }
@@ -827,24 +864,61 @@ class Program
 
         var currentSchedule = GenerateDutyImage(currentMonth, floor);
         await using var currentStream = new MemoryStream(currentSchedule);
-        await client.SendPhoto(chatId, InputFile.FromStream(currentStream, $"duty_{currentMonth:yyyy-MM}.png"), caption: $"График дежурств на кухне - {currentMonth:MMMM yyyy}");
-
+        var currentCaption = $"График дежурств на кухне - {currentMonth:MMMM yyyy}\n";
+        var dutyDays = GetDutyDaysForStudent(currentMonth, floor, chatId);
+        if (dutyDays.Any())
+        {
+            currentCaption += $"В этом месяце вы дежурите: {string.Join(", ", dutyDays.Select(d => d.ToString("dd")))}\n";
+        }
         using var db = new DutyScheduleContext();
+        var link = db.RoomCleanlinessLinks.FirstOrDefault(r => r.Floor == floor)?.Link;
+        if (!string.IsNullOrEmpty(link))
+        {
+            currentCaption += $"\nОценки за чистоту комнат: {link}";
+        }
+        await client.SendPhoto(chatId, InputFile.FromStream(currentStream, $"duty_{currentMonth:yyyy-MM}.png"), caption: currentCaption);
+
         if (db.DutySchedule.Any(ds => ds.Date.Month == nextMonth.Month && ds.Date.Year == nextMonth.Year && ds.Floor == floor))
         {
             var nextSchedule = GenerateDutyImage(nextMonth, floor);
             await using var nextStream = new MemoryStream(nextSchedule);
-            await client.SendPhoto(chatId, InputFile.FromStream(nextStream, $"duty_{nextMonth:yyyy-MM}.png"), caption: $"График дежурств на кухне - {nextMonth:MMMM yyyy}");
+            var nextCaption = $"График дежурств на кухне - {nextMonth:MMMM yyyy}\n";
+            var nextDutyDays = GetDutyDaysForStudent(nextMonth, floor, chatId);
+            if (nextDutyDays.Any())
+            {
+                nextCaption += $"В этом месяце вы дежурите: {string.Join(", ", nextDutyDays.Select(d => d.ToString("dd")))}\n";
+            }
+            link = db.RoomCleanlinessLinks.FirstOrDefault(r => r.Floor == floor)?.Link;
+            if (!string.IsNullOrEmpty(link))
+            {
+                nextCaption += $"\nОценки за чистоту комнат: {link}";
+            }
+            await client.SendPhoto(chatId, InputFile.FromStream(nextStream, $"duty_{nextMonth:yyyy-MM}.png"), caption: nextCaption);
         }
 
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
         await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
+    }
+
+    private static List<DateTime> GetDutyDaysForStudent(DateTime month, int floor, long chatId)
+    {
+        using var studentsDb = new StudentsContext();
+        var student = studentsDb.Students.FirstOrDefault(s => s.TelegramId == chatId);
+        if (student == null || student.Room == null) return new List<DateTime>();
+
+        using var db = new DutyScheduleContext();
+        var duties = db.DutySchedule
+            .Where(ds => ds.Floor == floor && ds.Date.Month == month.Month && ds.Date.Year == month.Year && ds.Room == student.Room)
+            .Select(ds => ds.Date)
+            .ToList();
+
+        return duties;
     }
 
     private static async Task HandleDutyProcess(ITelegramBotClient client, Message message, UserSession session)
@@ -939,6 +1013,24 @@ class Program
             await client.SendMessage(chatId, $"Комната для {date:dd.MM.yyyy} обновлена на {room}. Хотите редактировать дальше или сохранить изменения?", replyMarkup: keyboard);
             session.TempData["dutyState"] = "awaitingEditChoice";
         }
+        else if (state == "awaitingLinkUpdate")
+        {
+            var newLink = message.Text.Trim();
+            using var db = new DutyScheduleContext();
+            var linkEntry = db.RoomCleanlinessLinks.First(r => r.Floor == floor);
+            linkEntry.Link = string.IsNullOrEmpty(newLink) ? "" : newLink;
+            await db.SaveChangesAsync();
+            await client.SendMessage(chatId, $"Ссылка для этажа {floor} обновлена на: {linkEntry.Link}");
+            session.TempData.Remove("dutyState");
+            var menuKeyboard = new ReplyKeyboardMarkup(new[]
+            {
+                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+            })
+            { ResizeKeyboard = true };
+            await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
+        }
     }
 
     private static async Task HandleDutyCallback(ITelegramBotClient client, CallbackQuery callbackQuery, UserSession session)
@@ -955,10 +1047,21 @@ class Program
             var keyboard = new InlineKeyboardMarkup(new[]
             {
                 new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"),
-                      InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
+                      InlineKeyboardButton.WithCallbackData("Создать", "duty_create"),
+                      InlineKeyboardButton.WithCallbackData("Изменить ссылку", "duty_update_link") }
             });
             await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"Выбран этаж {floor}. Выберите действие:", replyMarkup: keyboard);
             await client.AnswerCallbackQuery(callbackQuery.Id);
+        }
+        else if (data == "duty_update_link")
+        {
+            if (session.Student.StudentRole != StudentRole.Староста_этажа && session.Student.StudentRole != StudentRole.Председатель_Студенческого_совета_общежития)
+            {
+                await client.SendMessage(chatId, "❌ У вас нет прав для изменения ссылки.");
+                return;
+            }
+            session.TempData["dutyState"] = "awaitingLinkUpdate";
+            await client.SendMessage(chatId, $"Введите новую ссылку для оценки чистоты комнат на этаже {floor}:");
         }
         else if (data == "duty_view")
         {
@@ -1077,7 +1180,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };
@@ -1090,7 +1193,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };
@@ -1146,7 +1249,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Жалоба"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };
@@ -1164,50 +1267,96 @@ class Program
         var keyboard = new InlineKeyboardMarkup(new[]
         {
             new[] { InlineKeyboardButton.WithCallbackData("Посмотреть", "duty_view"),
-                  InlineKeyboardButton.WithCallbackData("Создать", "duty_create") }
+                  InlineKeyboardButton.WithCallbackData("Создать", "duty_create"),
+                  InlineKeyboardButton.WithCallbackData("Изменить ссылку", "duty_update_link") }
         });
         await client.SendMessage(chatId, "Выберите действие:", replyMarkup: keyboard);
     }
 
     private static byte[] GenerateDutyImage(DateTime month, int floor)
     {
-        int cellPadding = 10, rowHeight = 30, headerHeight = 50, imageWidth = 800;
-        int[] columnWidths = { 100, 600 };
-        int imageHeight = headerHeight + DateTime.DaysInMonth(month.Year, month.Month) * rowHeight + 50;
+        int cellPadding = 10, rowHeight = 30, headerHeight = 50, dayHeaderHeight = 40;
+        int startRoom = floor * 100 + 1;
+        int endRoom = floor * 100 + 22;
+        int daysInMonth = DateTime.DaysInMonth(month.Year, month.Month);
+        int imageWidth = 50 + (daysInMonth * 30); // Adjust width based on number of days
+        int imageHeight = headerHeight + dayHeaderHeight + (endRoom - startRoom + 1) * rowHeight + 150; // Extra for footer
 
         using var bitmap = new Bitmap(imageWidth, imageHeight);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.Clear(System.Drawing.Color.White);
 
-        var headerFont = new System.Drawing.Font("Arial", 12, FontStyle.Bold);
+        var headerFont = new System.Drawing.Font("Arial", 16, FontStyle.Bold);
+        var dayFont = new System.Drawing.Font("Arial", 12, FontStyle.Bold);
         var rowFont = new System.Drawing.Font("Arial", 10);
+        var footerFont = new System.Drawing.Font("Arial", 12, FontStyle.Italic); // Increased font size
         var brush = new SolidBrush(System.Drawing.Color.Black);
+        var weekendBrush = new SolidBrush(System.Drawing.Color.Red); // Brighter color for weekends
 
-        graphics.DrawRectangle(Pens.Gray, 0, 0, columnWidths[0], headerHeight);
-        graphics.DrawString("Дата", headerFont, brush, new RectangleF(cellPadding, 15, columnWidths[0] - 2 * cellPadding, headerHeight), new StringFormat { Alignment = StringAlignment.Center });
-        graphics.DrawRectangle(Pens.Gray, columnWidths[0], 0, columnWidths[1], headerHeight);
-        graphics.DrawString("Комната", headerFont, brush, new RectangleF(columnWidths[0] + cellPadding, 15, columnWidths[1] - 2 * cellPadding, headerHeight), new StringFormat { Alignment = StringAlignment.Center });
+        // Header
+        graphics.DrawRectangle(Pens.Black, 0, 0, imageWidth, headerHeight);
+        graphics.DrawString("Дежурство с 22:15 до 22:45 СДАЧА ДЕЖУРСТВА СТАРОСТЕ!!!", headerFont, brush,
+            new RectangleF(10, 10, imageWidth - 20, headerHeight), new StringFormat { Alignment = StringAlignment.Center });
 
-        using var db = new DutyScheduleContext();
-        var duties = db.DutySchedule.Where(ds => ds.Floor == floor && ds.Date.Month == month.Month && ds.Date.Year == month.Year).ToList();
-
-        int y = headerHeight;
-        for (int day = 1; day <= DateTime.DaysInMonth(month.Year, month.Month); day++)
+        // Day headers
+        int x = 50;
+        graphics.DrawRectangle(Pens.Black, 0, headerHeight, 50, dayHeaderHeight);
+        graphics.DrawString("№ комнаты", dayFont, brush, new RectangleF(10, headerHeight + 5, 40, dayHeaderHeight), new StringFormat { Alignment = StringAlignment.Center });
+        for (int day = 1; day <= daysInMonth; day++)
         {
             var date = new DateTime(month.Year, month.Month, day);
-            var duty = duties.FirstOrDefault(ds => ds.Date.Date == date.Date);
-            var room = duty?.Room.ToString() ?? "Не назначено";
+            bool isWeekend = date.DayOfWeek == DayOfWeek.Saturday || date.DayOfWeek == DayOfWeek.Sunday;
+            graphics.DrawRectangle(Pens.Black, x, headerHeight, 30, dayHeaderHeight);
+            graphics.DrawString(day.ToString("00"), dayFont, isWeekend ? weekendBrush : brush,
+                new RectangleF(x + 5, headerHeight + 5, 20, dayHeaderHeight), new StringFormat { Alignment = StringAlignment.Center });
+            x += 30;
+        }
 
-            graphics.DrawRectangle(Pens.LightGray, 0, y, columnWidths[0], rowHeight);
-            graphics.DrawString(date.ToString("dd.MM"), rowFont, brush, new RectangleF(cellPadding, y + 5, columnWidths[0] - 2 * cellPadding, rowHeight), new StringFormat { Alignment = StringAlignment.Center });
-            graphics.DrawRectangle(Pens.LightGray, columnWidths[0], y, columnWidths[1], rowHeight);
-            graphics.DrawString(room, rowFont, brush, new RectangleF(columnWidths[0] + cellPadding, y + 5, columnWidths[1] - 2 * cellPadding, rowHeight), new StringFormat { Alignment = StringAlignment.Center });
+        // Room rows and duty assignments
+        using var db = new DutyScheduleContext();
+        var duties = db.DutySchedule.Where(ds => ds.Floor == floor && ds.Date.Month == month.Month && ds.Date.Year == month.Year).ToList();
+        int y = headerHeight + dayHeaderHeight;
+        for (int room = startRoom; room <= endRoom; room++)
+        {
+            graphics.DrawRectangle(Pens.Black, 0, y, 50, rowHeight);
+            graphics.DrawString(room.ToString(), rowFont, brush, new RectangleF(10, y + 5, 40, rowHeight), new StringFormat { Alignment = StringAlignment.Center });
+            x = 50;
+            for (int day = 1; day <= daysInMonth; day++)
+            {
+                var date = new DateTime(month.Year, month.Month, day);
+                var duty = duties.FirstOrDefault(ds => ds.Date.Date == date.Date && ds.Room == room);
+                if (duty != null)
+                {
+                    graphics.FillRectangle(Brushes.Gray, x, y, 30, rowHeight);
+                    graphics.DrawRectangle(Pens.Black, x, y, 30, rowHeight);
+                }
+                else
+                {
+                    graphics.DrawRectangle(Pens.Black, x, y, 30, rowHeight);
+                }
+                x += 30;
+            }
             y += rowHeight;
         }
 
-        var footerFont = new System.Drawing.Font("Arial", 8, FontStyle.Italic);
-        graphics.DrawString($"Этаж {floor} - {month:MMMM yyyy}", footerFont, Brushes.Gray, 20, imageHeight - 30);
+        // Seniors and footer section
+        using var studentsDb = new StudentsContext();
+        var seniors = studentsDb.Students
+            .Where(s => s.Floor == floor && (s.StudentRole == StudentRole.Староста_этажа || s.StudentRole == StudentRole.Председатель_Студенческого_совета_общежития))
+            .Select(s => $"{s.FIO}  ({s.Room})")
+            .ToList();
+        y += 10;
+        // Removed rectangles between footer lines
+        graphics.DrawString($"Старосты: {string.Join(", ", seniors)}", footerFont, brush,
+            new RectangleF(10, y + 5, imageWidth - 20, 30), new StringFormat { Alignment = StringAlignment.Near });
+        y += 30;
+        graphics.DrawString("Пакеты брать заранее у старост!", footerFont, brush,
+            new RectangleF(10, y + 5, imageWidth - 20, 30), new StringFormat { Alignment = StringAlignment.Near });
+        y += 30;
+        graphics.DrawString("Обязательно мыть мусорный бак!", footerFont, brush,
+            new RectangleF(10, y + 5, imageWidth - 20, 30), new StringFormat { Alignment = StringAlignment.Near });
 
+        // Save and return
         using var ms = new MemoryStream();
         bitmap.Save(ms, ImageFormat.Png);
         return ms.ToArray();
