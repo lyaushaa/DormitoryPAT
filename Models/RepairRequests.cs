@@ -30,7 +30,6 @@ namespace DormitoryPAT.Models
         public DateTime LastStatusChange { get; set; }
         // Навигационные свойства
         public Students Student { get; set; }
-        public Employees Master { get; set; }
         [NotMapped]
         public string StatusDisplay => Status switch
         {

@@ -51,9 +51,16 @@ class Program
         _notificationTimer.Elapsed += async (s, e) => await SendDutyNotifications();
         _notificationTimer.Start();
 
-        var me = await _botClient.GetMe();
-        Console.WriteLine($"[{DateTime.Now}] {me.FirstName} запущен! @{me.Username}");
-        Console.WriteLine($"[{DateTime.Now}] Ожидание сообщений...");
+        try
+        {
+            var me = await _botClient.GetMe();
+            Console.WriteLine($"[{DateTime.Now}] {me.FirstName} запущен! @{me.Username}");
+            Console.WriteLine($"[{DateTime.Now}] Ожидание сообщений...");
+        }
+        catch (Exception ex) 
+        {
+            Console.WriteLine($"[{DateTime.Now}] Ошибка подключения к сети: {ex}");
+        }
 
         await Task.Delay(-1);
     }
@@ -217,10 +224,10 @@ class Program
                         new[] { InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"),
                               InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
                     });
-                    await client.SendMessage(chatId, "Выберите, как отправить пожелание или жалобу:", replyMarkup: typeKeyboard);
+                    await client.SendMessage(chatId, "Выберите, как отправить пожелание:", replyMarkup: typeKeyboard);
                     break;
                 case "awaitingText":
-                    await client.SendMessage(chatId, "Пожалуйста, напишите текст вашего пожелания или жалобы:");
+                    await client.SendMessage(chatId, "Пожалуйста, напишите текст вашего пожелания:");
                     break;
                 case "awaitingConfirmation":
                     var confirmKeyboard = new InlineKeyboardMarkup(new[]
@@ -346,7 +353,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -361,7 +368,7 @@ class Program
         {
             new BotCommand { Command = "menu", Description = "Главное меню" },
             new BotCommand { Command = "repair", Description = "Заявка на ремонт" },
-            new BotCommand { Command = "complaint", Description = "Пожелания и жалобы" },
+            new BotCommand { Command = "complaint", Description = "Пожелания" },
             new BotCommand { Command = "payment", Description = "Плата за общежитие" },
             new BotCommand { Command = "phonebook", Description = "Телефонный справочник" },
             new BotCommand { Command = "duty", Description = "График дежурств" }
@@ -376,7 +383,7 @@ class Program
         var message = new StringBuilder("Главное меню:\nдоступные команды:\n");
         message.AppendLine("/menu - Главное меню");
         message.AppendLine("/repair - Заявка на ремонт");
-        message.AppendLine("/complaint - Пожелания и жалобы");
+        message.AppendLine("/complaint - Пожелания");
         message.AppendLine("/payment - Плата за общежитие");
         message.AppendLine("/phonebook - Телефонный справочник");
         message.AppendLine("/duty - График дежурств");
@@ -384,7 +391,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -415,7 +422,7 @@ class Program
                 break;
 
             case "/complaint":
-            case "пожелания и жалобы":
+            case "пожелания":
                 await HandleComplaintCommand(client, message, session);
                 break;
 
@@ -575,7 +582,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -584,7 +591,7 @@ class Program
     }
     #endregion
 
-    #region Модуль жалоб
+    #region Модуль пожеланий
     private static async Task HandleComplaintCommand(ITelegramBotClient client, Message message, UserSession session)
     {
         await StartComplaintProcess(client, message.Chat.Id);
@@ -592,20 +599,14 @@ class Program
 
     private static async Task StartComplaintProcess(ITelegramBotClient client, long chatId)
     {
-        var keyboard = new InlineKeyboardMarkup(new[]
-        {
-            new[] { InlineKeyboardButton.WithCallbackData("Анонимно", "complaint_anonymous"),
-                  InlineKeyboardButton.WithCallbackData("Не анонимно", "complaint_public") }
-        });
-
-        await client.SendMessage(chatId, "Выберите, как отправить пожелание или жалобу:", replyMarkup: keyboard);
+        await client.SendMessage(chatId, "✍ Напишите текст вашего пожелания:");
 
         if (!_userSessions.TryGetValue(chatId, out var session))
         {
             session = new UserSession();
             _userSessions[chatId] = session;
         }
-        session.TempData["complaintState"] = "awaitingType";
+        session.TempData["complaintState"] = "awaitingText";
     }
 
     private static async Task ProcessComplaintText(ITelegramBotClient client, Message message, UserSession session)
@@ -621,7 +622,7 @@ class Program
 
         if (string.IsNullOrWhiteSpace(message.Text) || message.Text.Length > 4096 || ContainsMaliciousInput(message.Text) || !IsTextOnly(message.Text))
         {
-            await client.SendMessage(chatId, "Текст пожелания или жалобы должен быть текстом, не содержать вредоносных данных и не превышать 4096 символов. Попробуйте снова:");
+            await client.SendMessage(chatId, "Текст пожелания должен быть текстом. Попробуйте снова:");
             await ContinueCurrentProcess(client, chatId, session);
             return;
         }
@@ -642,24 +643,14 @@ class Program
         var data = callbackQuery.Data;
         var messageId = callbackQuery.Message.MessageId;
 
-        if (data == "complaint_anonymous" || data == "complaint_public")
-        {
-            var isAnonymous = data == "complaint_anonymous";
-            session.TempData["complaintState"] = "awaitingText";
-            session.TempData["isAnonymous"] = isAnonymous;
-
-            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "✍ Напишите текст вашего пожелания или жалобы:", replyMarkup: null);
-            await client.AnswerCallbackQuery(callbackQuery.Id);
-        }
-        else if (data == "complaint_submit" && session.TempData["complaintState"].ToString() == "awaitingConfirmation")
+        if (data == "complaint_submit" && session.TempData["complaintState"].ToString() == "awaitingConfirmation")
         {
             var complaintText = session.TempData["complaintText"].ToString();
-            var isAnonymous = (bool)session.TempData["isAnonymous"];
 
             using var db = new ComplaintsContext();
             var complaint = new Complaints
             {
-                StudentId = isAnonymous ? null : (long?)session.Student.StudentId,
+                StudentId = session.Student.StudentId,
                 ComplaintText = complaintText,
                 Status = ComplaintStatus.Создана,
                 SubmissionDate = DateTime.Now,
@@ -669,33 +660,31 @@ class Program
             await db.Complaints.AddAsync(complaint);
             await db.SaveChangesAsync();
 
-            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"✅ Пожелания и жалобы #{complaint.ComplaintId} успешно создана!\nТип: {(isAnonymous ? "Анонимно" : "Не анонимно")}", replyMarkup: null);
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: $"✅ Пожелание #{complaint.ComplaintId} успешно создано!", replyMarkup: null);
             session.TempData.Remove("complaintState");
-            session.TempData.Remove("isAnonymous");
             session.TempData.Remove("complaintText");
 
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
-                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
-                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
-            })
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
             { ResizeKeyboard = true };
             await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
         else if (data == "complaint_cancel")
         {
             session.TempData.Remove("complaintState");
-            session.TempData.Remove("isAnonymous");
             session.TempData.Remove("complaintText");
-            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "❌ Создание пожелания или жалобы отменено.", replyMarkup: null);
+            await client.EditMessageText(chatId: chatId, messageId: messageId, text: "❌ Создание пожелания отменено.", replyMarkup: null);
 
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
-                new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
-                new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
-            })
+            new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
+        })
             { ResizeKeyboard = true };
             await client.SendMessage(chatId, "Выберите команду:", replyMarkup: menuKeyboard);
         }
@@ -718,7 +707,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -764,7 +753,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
         new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-        new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+        new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
         new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
     })
         { ResizeKeyboard = true };
@@ -899,7 +888,7 @@ class Program
         var menuKeyboard = new ReplyKeyboardMarkup(new[]
         {
             new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-            new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+            new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
             new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
         })
         { ResizeKeyboard = true };
@@ -1025,7 +1014,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };
@@ -1180,7 +1169,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };
@@ -1193,7 +1182,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };
@@ -1249,7 +1238,7 @@ class Program
             var menuKeyboard = new ReplyKeyboardMarkup(new[]
             {
                 new[] { new KeyboardButton("Главное меню"), new KeyboardButton("Заявка на ремонт") },
-                new[] { new KeyboardButton("Пожелания и жалобы"), new KeyboardButton("Плата за общежитие") },
+                new[] { new KeyboardButton("Пожелания"), new KeyboardButton("Плата за общежитие") },
                 new[] { new KeyboardButton("Телефонный справочник"), new KeyboardButton("График дежурств") }
             })
             { ResizeKeyboard = true };

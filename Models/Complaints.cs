@@ -9,7 +9,7 @@ namespace DormitoryPAT.Models
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public long ComplaintId { get; set; }
         [ForeignKey("Student")]
-        public long? StudentId { get; set; }
+        public long StudentId { get; set; }
         [Required]
         public string ComplaintText { get; set; }
         [ForeignKey("Reviewer")]
@@ -23,12 +23,9 @@ namespace DormitoryPAT.Models
         [DatabaseGenerated(DatabaseGeneratedOption.Computed)]
         public DateTime LastStatusChange { get; set; }
         // Навигационные свойства
-        public Students? Student { get; set; }
-        public Employees? Reviewer { get; set; }
-        // Свойства только для отображения
-        [NotMapped]
-        public string StudentIdDisplay => Student != null && Student.FIO != null ? Student.FIO : "Анонимно";
-
+        public Students Student { get; set; }
+        
+        
         [NotMapped]
         public string StatusDisplay => Status switch
         {
