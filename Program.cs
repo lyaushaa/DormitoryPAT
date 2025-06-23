@@ -108,15 +108,7 @@ class Program
 
         if (message.Text == "/start")
         {
-            if (session.Student != null)
-            {
-                await client.SendMessage(chatId, "Вы уже авторизованы. Используйте доступные команды.");
-                await UpdateMenuCommands(client, chatId);
-            }
-            else
-            {
-                await StartAuthProcess(client, chatId);
-            }
+            await StartAuthProcess(client, chatId);
             return;
         }
 
@@ -408,7 +400,7 @@ class Program
         switch (command)
         {
             case "/start":
-                await client.SendMessage(message.Chat.Id, "Вы уже авторизованы. Используйте доступные команды.");
+                await StartAuthProcess(client, message.Chat.Id);
                 break;
 
             case "/menu":
