@@ -713,23 +713,8 @@ class Program
         var image = GeneratePaymentTableImage();
         await using var stream = new MemoryStream(image);
 
-        // Get the base directory of the executing assembly and adjust to project root
-        var assemblyLocation = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-        var projectRoot = Directory.GetParent(assemblyLocation)?.Parent?.Parent?.FullName; // Navigate up to project root
-        var qrPath = Path.Combine(projectRoot, "Images", "QR-Code.png");
-
-        // Check if the file exists and handle the case where it doesn't
-        if (!File.Exists(qrPath))
-        {
-            await client.SendMessage(chatId, $"⚠ Ошибка: Файл QR-Code.png не найден по пути {qrPath}. Убедитесь, что он находится в DormitoryPat\\Images.");
-            return;
-        }
-
-        // Load QR code image
-        await using var qrStream = new FileStream(qrPath, FileMode.Open, FileAccess.Read);
-
         var caption = "💰 Плата за общежитие\n\n" +
-                      "Актуальную информацию по оплате смотрите на сайте Авиатехникума.\n\n" +                      
+                      "Актуальную информацию по оплате смотрите на сайте Авиатехникума.\n\n" +
                       "Реквизиты:\n" +
                       "Наименование получателя платежа: КГАПОУ «Авиатехникум»\n" +
                       "ИНН: 5902290441\n" +
@@ -753,8 +738,9 @@ class Program
         // Send payment table image
         await client.SendPhoto(chatId, InputFile.FromStream(stream, "payment_table.png"), caption: caption, replyMarkup: menuKeyboard);
 
-        // Send QR code image
-        await client.SendPhoto(chatId, InputFile.FromStream(qrStream, "QR-Code.png"), caption: "QR-код для оплаты\nТОЛЬКО ДЛЯ СБЕРБАНКА!!!", replyMarkup: menuKeyboard);
+        // Send QR code image from URL
+        await client.SendPhoto(chatId, InputFile.FromUri(new Uri("https://www.permaviat.ru/files/2/files/Ob_aviatehnikume/Obschejitie/QR-Code_Oplata_obschejitiya_cherez_Sberbank.png")),
+                               caption: "QR-код для оплаты\nТОЛЬКО ДЛЯ СБЕРБАНКА!!!", replyMarkup: menuKeyboard);
     }
 
     private static byte[] GeneratePaymentTableImage()
